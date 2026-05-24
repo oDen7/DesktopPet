@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "Default permissions",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-position",
+    "dialog:default"
+  ]
+}

@@ -1,11 +1,11 @@
 {
-  "name": "codex-desktop-pet",
+  "name": "moju-desktop-pet",
   "version": "1.0.0",
-  "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "dev": "tauri dev",
+    "build": "tauri build"
   },
-  "dependencies": {
-    "electron": "^30.0.0"
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
   }
 }

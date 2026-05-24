@@ -1,6 +1,6 @@
-# Codex Desktop Pet
+# 墨矩工坊 · 桌面宠物 (MoJu Desktop Pet)
 
-基于 Electron 的像素桌面宠物，一只会漫游、可拖拽、撞墙反弹的奶牛猫。
+基于 Tauri + Rust 的像素桌面宠物，一只会漫游、可拖拽、撞墙反弹的奶牛猫。
 
 ## 技术栈
 
@@ -84,7 +84,7 @@ PixelLab透明通道与像素优化：
 ### 使用步骤
 
 1. 将 Prompt 中的 `[角色特征]` 替换为目标角色描述
-2. 提交给 AI 图像生成工具
+2. 提交给 AI 图像生成工具，或使用 [PixelLab](https://www.pixellab.ai) → `Create` → `Animated object/character` 模式直接生成精灵图
 3. 将生成图放入 PixelLab → `Remove background` 抠黑底 → `Pixel art correction` 去毛边
 4. 导出 PNG，放入 `renderer/` 目录
 5. 更新 `style.css` 中的 `background-image` 和尺寸参数

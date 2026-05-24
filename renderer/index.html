@@ -8,7 +8,8 @@
   <div id="pet" class="pet-idle"></div>
 
   <script>
-    const { ipcRenderer } = require('electron');
+    const { invoke } = window.__TAURI__.core;
+    const { listen } = window.__TAURI__.event;
     const petEl = document.getElementById('pet');
     const PET = 128;
 
@@ -17,6 +18,7 @@
     let displays = [{ x: 0, y: 0, w: 1920, h: 1080 }];
 
     let isDragging = false;
+    let hasMoved = false;
     let isFalling = false;
     let fallVelocity = 0;
     let dragStartScreenX = 0, dragStartScreenY = 0;
@@ -32,14 +34,16 @@
       'walk-up-left', 'walk-up-right', 'walk-down-left', 'walk-down-right'
     ];
 
-    ipcRenderer.on('current-pos', (event, pos) => {
+    listen('current-pos', (event) => {
+      const pos = event.payload;
       currentX = pos.currentX;
       currentY = pos.currentY;
       if (pos.displays) displays = pos.displays;
       if (pos.blockedX || pos.blockedY) handleBounce(pos.blockedX, pos.blockedY);
     });
 
-    ipcRenderer.on('window-position', (event, pos) => {
+    listen('window-position', (event) => {
+      const pos = event.payload;
       windowStartX = pos.x;
       windowStartY = pos.y;
       if (pos.displays) displays = pos.displays;
@@ -58,7 +62,6 @@
       }
     }
 
-    // ---- Edge distance (center-point, matches main.js isOnScreen) ----
     function edgeDistance(dir) {
       const cx = currentX + PET / 2;
       const cy = currentY + PET / 2;
@@ -75,33 +78,24 @@
       return best === Infinity ? 9999 : best;
     }
 
-    // ---- Smart brain: soft edge avoidance ----
     function smartBrain() {
       if (isDragging || isFalling || !aiEnabled) return;
-
-      const MARGIN = 150; // Only avoid the last 150px near edges
+      const MARGIN = 150;
       const distLeft  = edgeDistance('left');
       const distRight = edgeDistance('right');
       const distUp    = edgeDistance('up');
       const distDown  = edgeDistance('down');
-
-      // Boost idle when in comfortable open space
       const minDist = Math.min(distLeft, distRight, distUp, distDown);
-      const comfortBonus = minDist > 300 ? 0.5 : 0; // +50% idle weight in wide-open areas
+      const comfortBonus = minDist > 300 ? 0.5 : 0;
 
       const weights = WALK_DIRS.map(dir => {
         if (dir === 'idle') return 1.0 + comfortBonus;
-
         let w = 1.0;
-
-        // Soft sqrt curve: gentler falloff, edges stay somewhat accessible
         const soft = (d) => d >= MARGIN ? 1.0 : Math.max(Math.sqrt(d / MARGIN), 0.05);
-
         if (dir.includes('left'))  w *= soft(distLeft);
         if (dir.includes('right')) w *= soft(distRight);
         if (dir.includes('up'))    w *= soft(distUp);
         if (dir.includes('down'))  w *= soft(distDown);
-
         return w;
       });
 
@@ -109,32 +103,15 @@
       let r = Math.random() * total;
       for (let i = 0; i < WALK_DIRS.length; i++) {
         r -= weights[i];
-        if (r <= 0) {
-          changeState(WALK_DIRS[i]);
-          return;
-        }
+        if (r <= 0) { changeState(WALK_DIRS[i]); return; }
       }
       changeState('idle');
     }
     setInterval(smartBrain, 4000);
 
-    // ---- Bounce: less rigid, more organic ----
     function handleBounce(blockedX, blockedY) {
-      if (isFalling) {
-        isFalling = false;
-        aiEnabled = true;
-        changeState('idle');
-        return;
-      }
-
-      // 25% chance: just stop and idle (natural pause)
-      const roll = Math.random();
-      if (roll < 0.25) {
-        changeState('idle');
-        return;
-      }
-
-      // 75%: pick a direction that doesn't go into the blocked wall
+      if (isFalling) { isFalling = false; aiEnabled = true; changeState('idle'); return; }
+      if (Math.random() < 0.25) { changeState('idle'); return; }
       const candidates = WALK_DIRS.filter(d => {
         if (d === 'idle') return false;
         if (blockedX && d.includes('left')) return false;
@@ -143,39 +120,40 @@
         if (blockedY && d.includes('down')) return false;
         return true;
       });
-
-      if (candidates.length > 0) {
-        changeState(candidates[Math.floor(Math.random() * candidates.length)]);
-      } else {
-        changeState('idle');
-      }
+      changeState(candidates.length > 0
+        ? candidates[Math.floor(Math.random() * candidates.length)]
+        : 'idle');
     }
+
+    // ---- Right-click: delegated to Rust native menu ----
+    petEl.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      invoke('show_context_menu');
+    });
 
     // ---- Mouse: Drag & Fall ----
     petEl.addEventListener('mousedown', (e) => {
-      aiEnabled = false;
-      isDragging = true;
-      isFalling = false;
-      dragStartScreenX = e.screenX;
-      dragStartScreenY = e.screenY;
-      ipcRenderer.send('get-position');
+      if (e.button !== 0) return;
+      aiEnabled = false; isDragging = true; hasMoved = false; isFalling = false;
+      dragStartScreenX = e.screenX; dragStartScreenY = e.screenY;
+      invoke('get_position');
       changeState('drag');
     });
 
     document.addEventListener('mousemove', (e) => {
       if (!isDragging) return;
-      ipcRenderer.send('move-pet-absolute', {
+      hasMoved = true;
+      invoke('move_pet_absolute', {
         x: windowStartX + e.screenX - dragStartScreenX,
         y: windowStartY + e.screenY - dragStartScreenY
       });
     });
 
-    document.addEventListener('mouseup', () => {
-      if (!isDragging) return;
+    document.addEventListener('mouseup', (e) => {
+      if (!isDragging || e.button !== 0) return;
       isDragging = false;
-      isFalling = true;
-      fallVelocity = 0;
-      changeState('fall');
+      if (hasMoved) { isFalling = true; fallVelocity = 0; changeState('fall'); }
+      else { aiEnabled = true; changeState('idle'); }
     });
 
     // ---- Movement & Physics ----
@@ -195,19 +173,15 @@
 
     function updateMovement() {
       if (isDragging) return;
-      if (isFalling) {
-        fallVelocity += 0.8;
-        ipcRenderer.send('move-pet', { dX: 0, dY: fallVelocity });
-        return;
-      }
+      if (isFalling) { fallVelocity += 0.8; invoke('move_pet', { dx: 0, dy: fallVelocity }); return; }
       if (!aiEnabled) return;
       const { dX, dY } = getMoveVector(currentState);
       if (dX === 0 && dY === 0) return;
-      ipcRenderer.send('move-pet', { dX, dY });
+      invoke('move_pet', { dx: dX, dy: dY });
     }
     setInterval(updateMovement, 16);
 
-    ipcRenderer.send('get-position');
+    invoke('get_position');
   </script>
 </body>
 </html>
