@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="pet" class="pet-idle"></div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const petEl = document.getElementById('pet');
+    const PET = 128;
+
+    let currentState = 'idle';
+    let currentX = 0, currentY = 0;
+    let displays = [{ x: 0, y: 0, w: 1920, h: 1080 }];
+
+    let isDragging = false;
+    let isFalling = false;
+    let fallVelocity = 0;
+    let dragStartScreenX = 0, dragStartScreenY = 0;
+    let windowStartX = 0, windowStartY = 0;
+    let aiEnabled = true;
+
+    const speed = 1.5;
+    const diagSpeed = 1.06;
+
+    const WALK_DIRS = [
+      'idle',
+      'walk-left', 'walk-right', 'walk-up', 'walk-down',
+      'walk-up-left', 'walk-up-right', 'walk-down-left', 'walk-down-right'
+    ];
+
+    ipcRenderer.on('current-pos', (event, pos) => {
+      currentX = pos.currentX;
+      currentY = pos.currentY;
+      if (pos.displays) displays = pos.displays;
+      if (pos.blockedX || pos.blockedY) handleBounce(pos.blockedX, pos.blockedY);
+    });
+
+    ipcRenderer.on('window-position', (event, pos) => {
+      windowStartX = pos.x;
+      windowStartY = pos.y;
+      if (pos.displays) displays = pos.displays;
+    });
+
+    function changeState(newState) {
+      currentState = newState;
+      if (newState.includes('left')) {
+        petEl.className = 'pet-walk-left';
+      } else if (newState.includes('right')) {
+        petEl.className = 'pet-walk-right';
+      } else if (newState === 'walk-up' || newState === 'walk-down') {
+        petEl.className = 'pet-walk-right';
+      } else {
+        petEl.className = 'pet-' + newState;
+      }
+    }
+
+    // ---- Edge distance (center-point, matches main.js isOnScreen) ----
+    function edgeDistance(dir) {
+      const cx = currentX + PET / 2;
+      const cy = currentY + PET / 2;
+      let best = Infinity;
+      for (const d of displays) {
+        if (cx < d.x || cx >= d.x + d.w || cy < d.y || cy >= d.y + d.h) continue;
+        switch (dir) {
+          case 'left':  best = Math.min(best, cx - d.x); break;
+          case 'right': best = Math.min(best, d.x + d.w - cx); break;
+          case 'up':    best = Math.min(best, cy - d.y); break;
+          case 'down':  best = Math.min(best, d.y + d.h - cy); break;
+        }
+      }
+      return best === Infinity ? 9999 : best;
+    }
+
+    // ---- Smart brain: soft edge avoidance ----
+    function smartBrain() {
+      if (isDragging || isFalling || !aiEnabled) return;
+
+      const MARGIN = 150; // Only avoid the last 150px near edges
+      const distLeft  = edgeDistance('left');
+      const distRight = edgeDistance('right');
+      const distUp    = edgeDistance('up');
+      const distDown  = edgeDistance('down');
+
+      // Boost idle when in comfortable open space
+      const minDist = Math.min(distLeft, distRight, distUp, distDown);
+      const comfortBonus = minDist > 300 ? 0.5 : 0; // +50% idle weight in wide-open areas
+
+      const weights = WALK_DIRS.map(dir => {
+        if (dir === 'idle') return 1.0 + comfortBonus;
+
+        let w = 1.0;
+
+        // Soft sqrt curve: gentler falloff, edges stay somewhat accessible
+        const soft = (d) => d >= MARGIN ? 1.0 : Math.max(Math.sqrt(d / MARGIN), 0.05);
+
+        if (dir.includes('left'))  w *= soft(distLeft);
+        if (dir.includes('right')) w *= soft(distRight);
+        if (dir.includes('up'))    w *= soft(distUp);
+        if (dir.includes('down'))  w *= soft(distDown);
+
+        return w;
+      });
+
+      const total = weights.reduce((a, b) => a + b, 0);
+      let r = Math.random() * total;
+      for (let i = 0; i < WALK_DIRS.length; i++) {
+        r -= weights[i];
+        if (r <= 0) {
+          changeState(WALK_DIRS[i]);
+          return;
+        }
+      }
+      changeState('idle');
+    }
+    setInterval(smartBrain, 4000);
+
+    // ---- Bounce: less rigid, more organic ----
+    function handleBounce(blockedX, blockedY) {
+      if (isFalling) {
+        isFalling = false;
+        aiEnabled = true;
+        changeState('idle');
+        return;
+      }
+
+      // 25% chance: just stop and idle (natural pause)
+      const roll = Math.random();
+      if (roll < 0.25) {
+        changeState('idle');
+        return;
+      }
+
+      // 75%: pick a direction that doesn't go into the blocked wall
+      const candidates = WALK_DIRS.filter(d => {
+        if (d === 'idle') return false;
+        if (blockedX && d.includes('left')) return false;
+        if (blockedX && d.includes('right')) return false;
+        if (blockedY && d.includes('up')) return false;
+        if (blockedY && d.includes('down')) return false;
+        return true;
+      });
+
+      if (candidates.length > 0) {
+        changeState(candidates[Math.floor(Math.random() * candidates.length)]);
+      } else {
+        changeState('idle');
+      }
+    }
+
+    // ---- Mouse: Drag & Fall ----
+    petEl.addEventListener('mousedown', (e) => {
+      aiEnabled = false;
+      isDragging = true;
+      isFalling = false;
+      dragStartScreenX = e.screenX;
+      dragStartScreenY = e.screenY;
+      ipcRenderer.send('get-position');
+      changeState('drag');
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      ipcRenderer.send('move-pet-absolute', {
+        x: windowStartX + e.screenX - dragStartScreenX,
+        y: windowStartY + e.screenY - dragStartScreenY
+      });
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      isFalling = true;
+      fallVelocity = 0;
+      changeState('fall');
+    });
+
+    // ---- Movement & Physics ----
+    function getMoveVector(state) {
+      switch (state) {
+        case 'walk-left':       return { dX: -speed, dY: 0 };
+        case 'walk-right':      return { dX: speed, dY: 0 };
+        case 'walk-up':         return { dX: 0, dY: -speed };
+        case 'walk-down':       return { dX: 0, dY: speed };
+        case 'walk-up-left':    return { dX: -diagSpeed, dY: -diagSpeed };
+        case 'walk-up-right':   return { dX: diagSpeed, dY: -diagSpeed };
+        case 'walk-down-left':  return { dX: -diagSpeed, dY: diagSpeed };
+        case 'walk-down-right': return { dX: diagSpeed, dY: diagSpeed };
+        default:                return { dX: 0, dY: 0 };
+      }
+    }
+
+    function updateMovement() {
+      if (isDragging) return;
+      if (isFalling) {
+        fallVelocity += 0.8;
+        ipcRenderer.send('move-pet', { dX: 0, dY: fallVelocity });
+        return;
+      }
+      if (!aiEnabled) return;
+      const { dX, dY } = getMoveVector(currentState);
+      if (dX === 0 && dY === 0) return;
+      ipcRenderer.send('move-pet', { dX, dY });
+    }
+    setInterval(updateMovement, 16);
+
+    ipcRenderer.send('get-position');
+  </script>
+</body>
+</html>

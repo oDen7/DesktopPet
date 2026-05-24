@@ -1,0 +1,51 @@
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+#pet {
+  width: 128px;
+  height: 128px;
+  background-image: url('main-3.png');
+  background-repeat: no-repeat;
+  background-size: 512px 512px;
+  image-rendering: pixelated;
+}
+
+/* ========== State 1: Idle (Row 1) ========== */
+.pet-idle {
+  background-position-y: 0px;
+  animation: sprite-x-anim 0.8s steps(4) infinite;
+}
+
+/* ========== State 2: Walk Left (Row 2, flipped) ========== */
+.pet-walk-left {
+  background-position-y: -128px;
+  animation: sprite-x-anim 0.6s steps(4) infinite;
+  transform: scaleX(-1);
+}
+
+/* ========== State 3: Walk Right (Row 2, natural) ========== */
+.pet-walk-right {
+  background-position-y: -128px;
+  animation: sprite-x-anim 0.6s steps(4) infinite;
+}
+
+/* ========== State 4: Drag (Row 3) ========== */
+.pet-drag {
+  background-position-y: -256px;
+  animation: sprite-x-anim 0.6s steps(4) infinite;
+}
+
+/* ========== State 5: Fall (Row 4) ========== */
+.pet-fall {
+  background-position-y: -384px;
+  animation: sprite-x-anim 0.4s steps(4) infinite;
+}
+
+@keyframes sprite-x-anim {
+  from { background-position-x: 0px; }
+  to { background-position-x: -512px; }
+}
