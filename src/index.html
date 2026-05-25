@@ -21,6 +21,7 @@
     let isDragging = false, hasMoved = false, isFalling = false;
     let fallVelocity = 0;
     let dragStartScreenX = 0, dragStartScreenY = 0;
+    let dragBaseX = 0, dragBaseY = 0, dragBaseReady = false;
     let windowStartX = 0, windowStartY = 0;
     let speed = 1.5;
     const BASE_SPEED = 1.5;
@@ -262,6 +263,7 @@
 
     // Wall bounce: break plan, reflect discrete direction
     function handleWallBounce(blockedLeft, blockedRight, blockedUp, blockedDown) {
+      if (isDragging) return;
       if (isFalling) { isFalling = false; changeState('idle'); return; }
       currentPlan.direction = reflectDir(currentPlan.direction,
         blockedLeft, blockedRight, blockedUp, blockedDown);
@@ -368,16 +370,31 @@
       if (e.button !== 0) return;
       isDragging = true; hasMoved = false; isFalling = false;
       dragStartScreenX = e.screenX; dragStartScreenY = e.screenY;
+      // Capture actual physical window position as drag base
+      dragBaseReady = false;
+      invoke('get_window_physical_pos').then(p => {
+        dragBaseX = p.x; dragBaseY = p.y;
+        dragBaseReady = true;
+      }).catch(() => {
+        // Fallback to currentX/Y if invoke fails
+        dragBaseX = currentX; dragBaseY = currentY;
+        dragBaseReady = true;
+      });
       changeState('drag');
     });
     document.addEventListener('mousemove', e => {
-      if (!isDragging) return;
+      if (!isDragging || !dragBaseReady) return;
       hasMoved = true;
-      invoke('move_pet_absolute', { x: currentX + e.screenX - dragStartScreenX, y: currentY + e.screenY - dragStartScreenY });
+      // screenX/Y are CSS pixels; multiply by devicePixelRatio for physical pixels
+      const dpr = window.devicePixelRatio || 1;
+      const physDx = (e.screenX - dragStartScreenX) * dpr;
+      const physDy = (e.screenY - dragStartScreenY) * dpr;
+      invoke('move_pet_absolute', { x: dragBaseX + physDx, y: dragBaseY + physDy });
     });
     document.addEventListener('mouseup', e => {
       if (!isDragging || e.button !== 0) return;
       isDragging = false;
+      dragBaseReady = false;
       if (hasMoved) { isFalling = true; fallVelocity = 0; changeState('fall'); }
       else { changeState('idle'); }
     });
@@ -410,8 +427,18 @@
       const st = currentState; petEl.className = ''; void petEl.offsetWidth; changeState(st);
     }
 
-    invoke('get_position');
-    invoke('get_settings').then(s => {
+    // Initialize position first, then settings, then start AI
+    invoke('get_position').then(() => {
+      // Wait a tick for window-position event to be processed
+      return new Promise(resolve => setTimeout(resolve, 50));
+    }).then(() => {
+      // Sync currentX/Y from windowStartX/Y if still at origin
+      if (currentX === 0 && currentY === 0 && (windowStartX !== 0 || windowStartY !== 0)) {
+        currentX = windowStartX;
+        currentY = windowStartY;
+      }
+      return invoke('get_settings');
+    }).then(s => {
       aiEnabled = s.ai_enabled; followEnabled = s.follow_enabled;
       speed = BASE_SPEED * s.speed_multiplier;
       if (s.sprite) applySprite(s.sprite);

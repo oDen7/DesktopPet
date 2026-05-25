@@ -5,9 +5,48 @@ use settings::{find_sprite, get_cursor_pos, list_sprites, load_settings, save_se
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, WebviewWindow};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
 use tauri_plugin_dialog::DialogExt;
 
 struct ContextMenu(Mutex<tauri::menu::Menu<tauri::Wry>>);
+
+fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
+    match id {
+        "follow" => {
+            let (mut s, _) = load_settings(app);
+            s.follow_enabled = !s.follow_enabled;
+            let _ = save_settings(app, &s);
+            let txt = if s.follow_enabled { "跟随鼠标 ✓" } else { "跟随鼠标" };
+            // Update menu item text (shared by both window context menu and tray menu)
+            if let Some(st) = app.try_state::<ContextMenu>() {
+                if let Ok(ref mut m) = st.0.lock() {
+                    if let Some(tauri::menu::MenuItemKind::MenuItem(ref item)) = m.get("follow") {
+                        let _ = item.set_text(txt);
+                    }
+                }
+            }
+            let sprite = find_sprite(app, &s.sprite_variant);
+            let _ = app.emit_to("main", "settings-changed", serde_json::json!({
+                "ai_enabled": s.ai_enabled, "follow_enabled": s.follow_enabled,
+                "speed_multiplier": s.speed_multiplier, "always_on_top": s.always_on_top,
+                "sprite_variant": s.sprite_variant, "sprite": sprite,
+            }));
+        }
+        "settings" => {
+            if let Some(w) = app.get_webview_window("settings") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            } else {
+                let _ = tauri::WebviewWindowBuilder::new(
+                    app, "settings", tauri::WebviewUrl::App("settings.html".into())
+                ).title("设置").inner_size(480.0, 600.0).center().build();
+            }
+        }
+        "about" => show_about_dialog(app),
+        "exit" => app.exit(0),
+        _ => {}
+    }
+}
 
 #[tauri::command]
 fn move_pet(window: WebviewWindow, app: tauri::AppHandle, dx: f64, dy: f64) -> Result<(), String> {
@@ -26,10 +65,18 @@ fn move_pet(window: WebviewWindow, app: tauri::AppHandle, dx: f64, dy: f64) -> R
 }
 
 #[tauri::command]
-fn move_pet_absolute(window: WebviewWindow, x: f64, y: f64) -> Result<(), String> {
+fn move_pet_absolute(window: WebviewWindow, app: tauri::AppHandle, x: f64, y: f64) -> Result<(), String> {
     let displays = display::get_all();
-    let (nx, ny) = display::clamp(x.round() as i32, y.round() as i32, &displays);
-    window.set_position(tauri::PhysicalPosition::new(nx, ny)).map_err(|e| e.to_string())
+    let req_x = x.round() as i32;
+    let req_y = y.round() as i32;
+    let (nx, ny) = display::clamp(req_x, req_y, &displays);
+    window.set_position(tauri::PhysicalPosition::new(nx, ny)).map_err(|e| e.to_string())?;
+    let blocked_x = (req_x - nx).abs() >= 1;
+    let blocked_y = (req_y - ny).abs() >= 1;
+    app.emit("current-pos", serde_json::json!({
+        "currentX": nx, "currentY": ny, "blockedX": blocked_x, "blockedY": blocked_y, "displays": displays
+    })).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -39,6 +86,12 @@ fn get_position(window: WebviewWindow, app: tauri::AppHandle) -> Result<(), Stri
     app.emit("window-position", serde_json::json!({ "x": pos.x, "y": pos.y, "displays": displays }))
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn get_window_physical_pos(window: WebviewWindow) -> Result<serde_json::Value, String> {
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "x": pos.x, "y": pos.y }))
 }
 
 #[tauri::command]
@@ -92,7 +145,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            move_pet, move_pet_absolute, get_position,
+            move_pet, move_pet_absolute, get_position, get_window_physical_pos,
             show_context_menu, get_settings, update_settings,
             list_sprites, upload_sprite, get_cursor_pos,
         ])
@@ -114,42 +167,22 @@ pub fn run() {
                 }
                 let app_handle = app.handle().clone();
                 window.on_menu_event(move |_window, event| {
-                    match event.id().as_ref() {
-                        "follow" => {
-                            let (mut s, _) = load_settings(&app_handle);
-                            s.follow_enabled = !s.follow_enabled;
-                            let _ = save_settings(&app_handle, &s);
-                            let txt = if s.follow_enabled { "跟随鼠标 ✓" } else { "跟随鼠标" };
-                            if let Some(st) = app_handle.try_state::<ContextMenu>() {
-                                if let Ok(ref mut m) = st.0.lock() {
-                                    if let Some(tauri::menu::MenuItemKind::MenuItem(ref item)) = m.get("follow") {
-                                        let _ = item.set_text(txt);
-                                    }
-                                }
-                            }
-                            let sprite = find_sprite(&app_handle, &s.sprite_variant);
-                            let _ = app_handle.emit_to("main", "settings-changed", serde_json::json!({
-                                "ai_enabled": s.ai_enabled, "follow_enabled": s.follow_enabled,
-                                "speed_multiplier": s.speed_multiplier, "always_on_top": s.always_on_top,
-                                "sprite_variant": s.sprite_variant, "sprite": sprite,
-                            }));
-                        }
-                        "settings" => {
-                            if let Some(w) = app_handle.get_webview_window("settings") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            } else {
-                                let _ = tauri::WebviewWindowBuilder::new(
-                                    &app_handle, "settings", tauri::WebviewUrl::App("settings.html".into())
-                                ).title("设置").inner_size(480.0, 600.0).center().build();
-                            }
-                        }
-                        "about" => show_about_dialog(&app_handle),
-                        "exit" => app_handle.exit(0),
-                        _ => {}
-                    }
+                    let id = event.id().as_ref().to_string();
+                    handle_menu_event(&app_handle, &id);
                 });
             }
+
+            // System tray icon with the same menu
+            let _tray = TrayIconBuilder::with_id("main-tray")
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("墨矩工坊 · 桌面宠物")
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    let id = event.id().as_ref().to_string();
+                    handle_menu_event(app, &id);
+                })
+                .build(app)?;
+
             app.manage(ContextMenu(Mutex::new(menu)));
             Ok(())
         })

@@ -17,7 +17,7 @@ impl Default for PetSettings {
             follow_enabled: false,
             speed_multiplier: 1.0,
             always_on_top: true,
-            sprite_variant: "Cs55_R".to_string(),
+            sprite_variant: "blackcat".to_string(),
         }
     }
 }
@@ -55,7 +55,7 @@ pub fn save_settings(app: &tauri::AppHandle, settings: &PetSettings) -> Result<(
 }
 
 pub fn find_sprite(app: &tauri::AppHandle, id: &str) -> Option<SpriteInfo> {
-    for s in get_preset_sprites() {
+    for s in get_preset_sprites(app) {
         if s.id == id {
             return Some(s);
         }
@@ -142,17 +142,25 @@ fn scan_sprites_dir(dir: &std::path::Path, is_preset: bool, url_prefix: &str) ->
     sprites
 }
 
-pub fn get_preset_sprites() -> Vec<SpriteInfo> {
+pub fn get_preset_sprites(app: &tauri::AppHandle) -> Vec<SpriteInfo> {
+    use tauri::Manager;
     let mut tried = Vec::new();
 
     // Collect candidate dirs:
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-    // 1. public/sprites/ from cwd (project root in npm run dev)
+
+    // 1. Bundle resources (production: INSTALL_DIR/resources/public/sprites/)
+    if let Ok(res_dir) = app.path().resource_dir() {
+        candidates.push(res_dir.join("public").join("sprites"));
+    }
+
+    // 2. Dev paths: public/sprites and dist/sprites from cwd
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("public").join("sprites"));
         candidates.push(cwd.join("dist").join("sprites"));
     }
-    // 2. CARGO_MANIFEST_DIR = src-tauri/, so ../../public/sprites/
+
+    // 3. Dev paths: relative to CARGO_MANIFEST_DIR
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         let base = std::path::PathBuf::from(&manifest);
         candidates.push(base.join("..").join("public").join("sprites"));
@@ -169,25 +177,31 @@ pub fn get_preset_sprites() -> Vec<SpriteInfo> {
         }
     }
 
-    // Fallback: hardcoded presets
+    // Fallback: hardcoded presets (should rarely be hit now)
     eprintln!("[desktop-pet] preset scan tried: {:?}, using fallback", tried);
     vec![
         SpriteInfo {
             id: "blackcat".into(), name: "黑猫".into(), is_preset: true,
-            w: 256, h: 256,
-            url: "/sprites/blackcat.png".into(),
+            w: 256, h: 256, url: "/sprites/blackcat.png".into(),
         },
         SpriteInfo {
             id: "Cs55_R".into(), name: "Cs55_R".into(), is_preset: true,
-            w: 512, h: 512,
-            url: "/sprites/Cs55_R.png".into(),
+            w: 512, h: 512, url: "/sprites/Cs55_R.png".into(),
+        },
+        SpriteInfo {
+            id: "orangecat".into(), name: "橘猫".into(), is_preset: true,
+            w: 256, h: 256, url: "/sprites/orangecat.png".into(),
+        },
+        SpriteInfo {
+            id: "shiba".into(), name: "柴犬".into(), is_preset: true,
+            w: 512, h: 530, url: "/sprites/shiba.png".into(),
         },
     ]
 }
 
 #[tauri::command]
 pub fn list_sprites(app: tauri::AppHandle) -> Result<Vec<SpriteInfo>, String> {
-    let mut sprites = get_preset_sprites();
+    let mut sprites = get_preset_sprites(&app);
 
     // Scan user-uploaded sprites
     if let Ok(data_dir) = app.path().app_data_dir() {
