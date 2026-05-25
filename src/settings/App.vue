@@ -30,7 +30,7 @@ const settings = reactive({
   followEnabled: false,
   speedMultiplier: 1.0,
   alwaysOnTop: true,
-  spriteVariant: 'Cs55_R',
+  spriteVariant: 'blackcat',
 });
 
 const saving = ref(false);
