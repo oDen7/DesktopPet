@@ -1,47 +1,92 @@
 # 墨矩工坊 · 桌面宠物 (MoJu Desktop Pet)
 
-基于 Tauri + Rust 的像素桌面宠物，一只会漫游、可拖拽、撞墙反弹的奶牛猫。
+基于 Tauri v2 + Rust 的像素桌面宠物，支持多精灵切换、多显示器跨屏漫游、拖拽交互。
 
 ## 技术栈
 
-- **Electron** — 透明无边框置顶窗口
+- **Tauri v2** — Rust 后端，透明无边框置顶窗口
+- **Vue 3 + TypeScript** — 设置面板
+- **Vite** — 多页构建 (宠物窗口 + 设置窗口)
+- **Less** — CSS 预处理
 - **CSS Steps** — 精灵图逐帧动画
-- **IPC** — 主进程统一管理窗口位置与多屏边界
 
 ## 快速开始
 
 ```bash
 npm install
-npm start
+npm run dev       # 开发模式 (前端热更新 + Tauri 窗口)
+npm run build     # 构建生产版本
+```
+
+构建 MSI 安装包：
+
+```bash
+cd src-tauri
+cargo tauri build
 ```
 
 ## 项目结构
 
 ```
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+├── CLAUDE.md                    # AI 开发原则
 ├── src/
-│   └── main.js     # 主进程：透明窗口、多屏边界、碰撞检测
-├── renderer/
-│   ├── index.html  # 渲染层：状态机、AI 漫游、拖拽下落
-│   ├── style.css   # CSS Steps 切帧动画、方向翻转
-│   └── main-3.png  # 4×4 精灵图 (256×256 RGBA)
-└── package.json
+│   ├── index.html               # 宠物窗口 (vanilla JS + 路径算法)
+│   ├── pet.less                 # 精灵图逐帧动画样式
+│   ├── settings.html            # 设置窗口入口
+│   └── settings/                # Vue 3 设置应用
+│       ├── main.ts
+│       ├── App.vue
+│       ├── style.less
+│       └── components/
+│           ├── ToggleSetting.vue # 开关组件
+│           ├── SpeedControl.vue  # 速度滑块
+│           └── SpritePicker.vue  # 精灵选择 & 上传
+├── public/
+│   └── sprites/                 # 预设精灵 PNG (4×4 网格)
+├── src-tauri/                   # Rust 后端
+│   ├── tauri.conf.json
+│   ├── Cargo.toml
+│   ├── capabilities/
+│   └── src/
+│       ├── main.rs              # 入口
+│       ├── lib.rs               # Tauri 命令 + 菜单 + 窗口管理
+│       ├── display.rs           # 多显示器工作区检测 + 边界 clamp
+│       └── settings.rs          # 设置持久化 + 精灵库扫描
+└── dist/                        # 前端构建输出
 ```
-
-## 精灵图布局 (4×4)
-
-| 行 | 状态 | 说明 |
-|---|---|---|
-| 1 | idle | 发呆 |
-| 2 | walk | 侧面行走（左走翻转，右走原画） |
-| 3 | drag | 被抓起 |
-| 4 | fall | 下落 |
 
 ## 交互
 
-- **鼠标按住拖拽** — 抓起宠物
-- **松开** — 自由落体
-- **AI 漫游** — 8 方向随机行走 + 边缘排斥算法，偏爱开阔区域
-- **多屏支持** — 自动检测所有显示器工作区，宠物可跨屏漫游
+| 操作 | 行为 |
+|------|------|
+| 鼠标拖拽 | 抓起宠物，松手后自由落体 |
+| 右键 | 原生菜单 (跟随鼠标 / 设置 / 关于 / 退出) |
+| AI 漫游 | 步长规划 + 正弦摆动，走-歇-走节奏 |
+| 多屏跨屏 | 自动检测所有显示器工作区，接缝处平滑穿越 |
+
+## AI 路径算法
+
+基于步长规划的速度向量系统：
+
+- **智能规划器** — 每 1.5~3 秒产出一个计划 (方向 + 步数 + 是否暂停)
+- **8 方向加权选择** — 边缘回避 + 桌面中心引力 + 反对角线偏置 + 随机抖动
+- **正弦摆动** — 在选定方向叠加垂直正弦扰动，路径自然不僵硬
+- **物理反弹** — 碰壁后离散方向反射 + 角度噪声，墙角独立处理
+- **接缝检测** — 逐显示器逐边判断是否相邻屏幕，接缝方向不回避可穿过
+- **多显示器** — 中心点重叠判定，支持 L 形等异形屏幕组合
+
+## 设置
+
+通过右键菜单打开设置窗口，可调整：
+
+- AI 自动漫游开关
+- 跟随鼠标开关
+- 移动速度 (0.25x ~ 3x)
+- 窗口置顶
+- 宠物形象 (预设 + 用户上传)
 
 ## 精灵图生成 Prompt
 
@@ -60,7 +105,7 @@ Layout: A clean, perfectly aligned 4x4 matrix grid consisting of exactly 16 fram
 - Row 3 (Drag/Picked up): 4 sequential frames, FULL FRONT VIEW. The character is suspended in mid-air from its collar/scruff/top, body elongated vertically, with its arms and legs/paws flailing helplessly in a surprised expression. Strictly NO mouse cursors.
 - Row 4 (Fall): 4 sequential frames, FULL FRONT VIEW. Directly continuing the dangling pose from Row 3. As it falls downwards helplessly, its limbs are raised upwards, its eyes are closed tightly, and vertical speed lines appear behind it to simulate intense gravity.
 
-Alpha & Transparency Control for PixelLab Optimization:
+Alpha & Transparency Control:
 The entire canvas must be isolated on a 100% solid, flat jet-black background (#000000). Every asset must have clean, razor-sharp single-pixel outlines. Strictly NO white padding, NO gray blurry anti-aliasing edges, NO background glow, and NO environment dust/debris artifacts. All negative space must be pure black to ensure seamless chroma-key transparency ripping.
 ```
 
@@ -86,5 +131,5 @@ PixelLab透明通道与像素优化：
 1. 将 Prompt 中的 `[角色特征]` 替换为目标角色描述
 2. 提交给 AI 图像生成工具，或使用 [PixelLab](https://www.pixellab.ai) → `Create` → `Animated object/character` 模式直接生成精灵图
 3. 将生成图放入 PixelLab → `Remove background` 抠黑底 → `Pixel art correction` 去毛边
-4. 导出 PNG，放入 `renderer/` 目录
-5. 更新 `style.css` 中的 `background-image` 和尺寸参数
+4. 导出 PNG，放入 `public/sprites/` 目录（应用会自动扫描注册）
+5. 若精灵图尺寸非标准 4×4 均分，在 `src/index.html` 的 `SPRITE_ADJUST` 中配置 `{ w, h }` 或 `{ rowH: [...] }`

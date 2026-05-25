@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+#pet {
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  will-change: background-position;
+  /* width, height, background-image, background-size set by JS */
+}
+
+/* background-position-y set by JS, @keyframes sprite-x-anim injected by JS */
+.pet-idle   { animation: sprite-x-anim 0.8s steps(4) infinite; }
+.pet-walk-left  { animation: sprite-x-anim 0.6s steps(4) infinite; transform: scaleX(-1); }
+.pet-walk-right { animation: sprite-x-anim 0.6s steps(4) infinite; }
+.pet-drag  { animation: sprite-x-anim 0.6s steps(4) infinite; }
+.pet-fall  { animation: sprite-x-anim 0.4s steps(4) infinite; }

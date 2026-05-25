@@ -1,5 +1,7 @@
 mod display;
+mod settings;
 
+use settings::{find_sprite, get_cursor_pos, list_sprites, load_settings, save_settings, upload_sprite, PetSettings};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, WebviewWindow};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -10,56 +12,32 @@ struct ContextMenu(Mutex<tauri::menu::Menu<tauri::Wry>>);
 #[tauri::command]
 fn move_pet(window: WebviewWindow, app: tauri::AppHandle, dx: f64, dy: f64) -> Result<(), String> {
     let pos = window.outer_position().map_err(|e| e.to_string())?;
-    let displays = display::get_all(&window);
-
+    let displays = display::get_all();
     let req_x = pos.x as f64 + dx;
     let req_y = pos.y as f64 + dy;
     let (fx, fy) = display::clamp(req_x.round() as i32, req_y.round() as i32, &displays);
-
-    window
-        .set_position(tauri::PhysicalPosition::new(fx, fy))
-        .map_err(|e| e.to_string())?;
-
+    window.set_position(tauri::PhysicalPosition::new(fx, fy)).map_err(|e| e.to_string())?;
     let blocked_x = (req_x - fx as f64).abs() >= 0.5;
     let blocked_y = (req_y - fy as f64).abs() >= 0.5;
-
-    app.emit(
-        "current-pos",
-        serde_json::json!({
-            "currentX": fx,
-            "currentY": fy,
-            "blockedX": blocked_x,
-            "blockedY": blocked_y,
-            "displays": displays
-        }),
-    )
-    .map_err(|e| e.to_string())?;
-
+    app.emit("current-pos", serde_json::json!({
+        "currentX": fx, "currentY": fy, "blockedX": blocked_x, "blockedY": blocked_y, "displays": displays
+    })).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn move_pet_absolute(window: WebviewWindow, x: f64, y: f64) -> Result<(), String> {
-    let displays = display::get_all(&window);
+    let displays = display::get_all();
     let (nx, ny) = display::clamp(x.round() as i32, y.round() as i32, &displays);
-    window
-        .set_position(tauri::PhysicalPosition::new(nx, ny))
-        .map_err(|e| e.to_string())
+    window.set_position(tauri::PhysicalPosition::new(nx, ny)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_position(window: WebviewWindow, app: tauri::AppHandle) -> Result<(), String> {
     let pos = window.outer_position().map_err(|e| e.to_string())?;
-    let displays = display::get_all(&window);
-    app.emit(
-        "window-position",
-        serde_json::json!({
-            "x": pos.x,
-            "y": pos.y,
-            "displays": displays
-        }),
-    )
-    .map_err(|e| e.to_string())?;
+    let displays = display::get_all();
+    app.emit("window-position", serde_json::json!({ "x": pos.x, "y": pos.y, "displays": displays }))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -67,6 +45,39 @@ fn get_position(window: WebviewWindow, app: tauri::AppHandle) -> Result<(), Stri
 fn show_context_menu(window: WebviewWindow, state: tauri::State<'_, ContextMenu>) -> Result<(), String> {
     let menu = state.0.lock().map_err(|e| e.to_string())?;
     window.popup_menu(&*menu).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let (disk, log) = load_settings(&app);
+    let sprite = find_sprite(&app, &disk.sprite_variant);
+    Ok(serde_json::json!({
+        "ai_enabled": disk.ai_enabled,
+        "follow_enabled": disk.follow_enabled,
+        "speed_multiplier": disk.speed_multiplier,
+        "always_on_top": disk.always_on_top,
+        "sprite_variant": disk.sprite_variant,
+        "sprite": sprite,
+        "_load_log": log,
+    }))
+}
+
+#[tauri::command]
+fn update_settings(app: tauri::AppHandle, settings: PetSettings) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_always_on_top(settings.always_on_top).map_err(|e| e.to_string())?;
+    }
+    save_settings(&app, &settings)?;
+    let sprite = find_sprite(&app, &settings.sprite_variant);
+    app.emit_to("main", "settings-changed", serde_json::json!({
+        "ai_enabled": settings.ai_enabled,
+        "follow_enabled": settings.follow_enabled,
+        "speed_multiplier": settings.speed_multiplier,
+        "always_on_top": settings.always_on_top,
+        "sprite_variant": settings.sprite_variant,
+        "sprite": sprite,
+    })).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn show_about_dialog(app: &tauri::AppHandle) {
@@ -81,40 +92,64 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            move_pet,
-            move_pet_absolute,
-            get_position,
-            show_context_menu,
+            move_pet, move_pet_absolute, get_position,
+            show_context_menu, get_settings, update_settings,
+            list_sprites, upload_sprite, get_cursor_pos,
         ])
         .setup(|app| {
+            let follow_item = MenuItemBuilder::with_id("follow", "跟随鼠标").build(app.handle())?;
+            let settings_item = MenuItemBuilder::with_id("settings", "设置").build(app.handle())?;
             let about = MenuItemBuilder::with_id("about", "关于").build(app.handle())?;
             let exit = MenuItemBuilder::with_id("exit", "退出").build(app.handle())?;
             let menu = MenuBuilder::new(app.handle())
-                .items(&[&about, &exit])
+                .items(&[&follow_item, &settings_item, &about, &exit])
                 .build()?;
 
             if let Some(window) = app.get_webview_window("main") {
-                // Initial position
-                let monitors = window.available_monitors().unwrap_or_default();
-                if let Some(m) = monitors.first() {
-                    let sz = m.size();
-                    let pos = m.position();
-                    let x = pos.x + sz.width as i32 - 178;
-                    let y = pos.y + sz.height as i32 - display::PET_H;
+                let displays = display::get_all();
+                if let Some(d) = displays.first() {
+                    let x = d.x + d.w - display::PET_W - 50;
+                    let y = d.y + d.h - display::PET_H - 50;
                     window.set_position(tauri::PhysicalPosition::new(x, y)).ok();
                 }
-
-                // Native context menu handler
                 let app_handle = app.handle().clone();
                 window.on_menu_event(move |_window, event| {
                     match event.id().as_ref() {
+                        "follow" => {
+                            let (mut s, _) = load_settings(&app_handle);
+                            s.follow_enabled = !s.follow_enabled;
+                            let _ = save_settings(&app_handle, &s);
+                            let txt = if s.follow_enabled { "跟随鼠标 ✓" } else { "跟随鼠标" };
+                            if let Some(st) = app_handle.try_state::<ContextMenu>() {
+                                if let Ok(ref mut m) = st.0.lock() {
+                                    if let Some(tauri::menu::MenuItemKind::MenuItem(ref item)) = m.get("follow") {
+                                        let _ = item.set_text(txt);
+                                    }
+                                }
+                            }
+                            let sprite = find_sprite(&app_handle, &s.sprite_variant);
+                            let _ = app_handle.emit_to("main", "settings-changed", serde_json::json!({
+                                "ai_enabled": s.ai_enabled, "follow_enabled": s.follow_enabled,
+                                "speed_multiplier": s.speed_multiplier, "always_on_top": s.always_on_top,
+                                "sprite_variant": s.sprite_variant, "sprite": sprite,
+                            }));
+                        }
+                        "settings" => {
+                            if let Some(w) = app_handle.get_webview_window("settings") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            } else {
+                                let _ = tauri::WebviewWindowBuilder::new(
+                                    &app_handle, "settings", tauri::WebviewUrl::App("settings.html".into())
+                                ).title("设置").inner_size(480.0, 600.0).center().build();
+                            }
+                        }
                         "about" => show_about_dialog(&app_handle),
                         "exit" => app_handle.exit(0),
                         _ => {}
                     }
                 });
             }
-
             app.manage(ContextMenu(Mutex::new(menu)));
             Ok(())
         })

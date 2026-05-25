@@ -1,11 +1,21 @@
 {
   "name": "moju-desktop-pet",
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build"
+    "dev": "concurrently \"vite build --watch\" \"tauri dev\"",
+    "build": "vite build && tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^25.9.1",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "concurrently": "^9.2.1",
+    "less": "^4.6.4",
+    "typescript": "^6.0.3",
+    "vite": "^6.4.2",
+    "vue": "^3.5.34",
+    "vue-tsc": "^3.3.1"
   }
 }
