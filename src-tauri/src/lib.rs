@@ -135,7 +135,7 @@ fn update_settings(app: tauri::AppHandle, settings: PetSettings) -> Result<(), S
 
 fn show_about_dialog(app: &tauri::AppHandle) {
     app.dialog()
-        .message("墨矩工坊 · 桌面宠物\nMoJu Tech · Desktop Pet\n\nv0.0.1-beta\n\n© 2026 墨矩工坊 MoJu Tech")
+        .message("墨矩工坊 · 桌面宠物\nMoJu Tech · Desktop Pet\n\nv0.1.0-beta\n\n© 2026 墨矩工坊 MoJu Tech")
         .title("关于")
         .show(|_| {});
 }
