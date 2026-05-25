@@ -16,10 +16,12 @@
         <span class="sprite-name">{{ sprite.name }}</span>
         <span v-if="sprite.is_preset" class="sprite-badge">预设</span>
       </div>
+      <!-- 上传功能暂时禁用
       <div class="sprite-card upload-card" @click="uploadSprite">
         <div class="upload-icon">+</div>
         <span class="sprite-name">上传新形象</span>
       </div>
+      -->
     </div>
   </div>
 </template>
@@ -56,6 +58,8 @@ onMounted(async () => {
   }
 });
 
+// 上传功能暂时禁用
+/*
 async function uploadSprite() {
   try {
     const result = await invoke<SpriteInfo | null>('upload_sprite');
@@ -66,4 +70,5 @@ async function uploadSprite() {
     console.error('Failed to upload sprite:', e);
   }
 }
+*/
 </script>
