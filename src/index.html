@@ -85,9 +85,17 @@
       if (chaseEnabled) {
         // 追逐模式：AI brain 仍然运行（鼠标远离时回落到漫游）
         scheduleBrain();
-      } else if (aiEnabled && !followEnabled) {
+      } else if (followEnabled) {
+        // 跟随模式：停止brain，清空残留状态，RAF循环接管移动
+        if (brainTimer) { clearTimeout(brainTimer); brainTimer = null; }
+        currentVelocity.x = 0; currentVelocity.y = 0;
+        changeState('idle');
+      } else if (aiEnabled) {
+        // AI 漫游：立刻过期旧计划，下一帧smartBrain会产新计划
+        currentPlan.currentStep = currentPlan.totalSteps;
         scheduleBrain();
-      } else if (!followEnabled) {
+      } else {
+        // 全部关闭 → 待命
         if (brainTimer) { clearTimeout(brainTimer); brainTimer = null; }
         changeState('idle');
       }
@@ -299,7 +307,7 @@
 
     // ---- Plan-based brain ----
     function smartBrain() {
-      if (isDragging || isFalling || !aiEnabled || followEnabled) return;
+      if (isDragging || isFalling || !aiEnabled || followEnabled || chaseEnabled) return;
       const tm = getTimeModifier();
 
       const cx = currentX + DISPLAY_SIZE / 2, cy = currentY + DISPLAY_SIZE / 2;
@@ -982,7 +990,7 @@
       speed = BASE_SPEED * s.speed_multiplier;
       plannedSpeed = speed;
       if (s.sprite) applySprite(s.sprite);
-      if (aiEnabled && !followEnabled) scheduleBrain();
+      if (chaseEnabled || (aiEnabled && !followEnabled)) scheduleBrain();
     });
   </script>
 </body>

@@ -46,14 +46,24 @@ const errorMsg = ref('');
 const debugInfo = ref('');
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSaved = ''; // 用已保存状态的 JSON 指纹防止 echo 循环
 let unlistenSettings: (() => void) | null = null;
 let unlistenFocus: (() => void) | null = null;
-let isExternalUpdate = false; // 标记是否来自外部事件，避免触发 save
+
+function stateFingerprint() {
+  return JSON.stringify({
+    ai_enabled: settings.aiEnabled,
+    follow_enabled: settings.followEnabled,
+    chase_enabled: settings.chaseEnabled,
+    speed_multiplier: settings.speedMultiplier,
+    always_on_top: settings.alwaysOnTop,
+    sprite_variant: settings.spriteVariant,
+  });
+}
 
 async function loadSettings() {
   try {
     const s: any = await invoke('get_settings');
-    isExternalUpdate = true;
     settings.aiEnabled = s.ai_enabled;
     settings.followEnabled = s.follow_enabled;
     settings.chaseEnabled = s.chase_enabled;
@@ -61,25 +71,20 @@ async function loadSettings() {
     settings.alwaysOnTop = s.always_on_top;
     settings.spriteVariant = s.sprite_variant;
     if (s._load_log) debugInfo.value = s._load_log;
-    setTimeout(() => { isExternalUpdate = false; }, 100);
+    lastSaved = stateFingerprint();
   } catch (e: any) {
     errorMsg.value = '加载失败: ' + (e?.toString?.() || e);
   }
 }
 
 async function save() {
+  saveTimer = null;
+  const fp = stateFingerprint();
+  if (fp === lastSaved) return; // 与上次保存一致，跳过（防止 event echo 循环）
   errorMsg.value = '';
   try {
-    await invoke('update_settings', {
-      settings: {
-        ai_enabled: settings.aiEnabled,
-        follow_enabled: settings.followEnabled,
-        chase_enabled: settings.chaseEnabled,
-        speed_multiplier: settings.speedMultiplier,
-        always_on_top: settings.alwaysOnTop,
-        sprite_variant: settings.spriteVariant,
-      },
-    });
+    await invoke('update_settings', { settings: JSON.parse(fp) });
+    lastSaved = fp;
     saving.value = true;
     setTimeout(() => { saving.value = false; }, 1500);
   } catch (e: any) {
@@ -89,43 +94,40 @@ async function save() {
 
 function debouncedSave() {
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(save, 300);
+  saveTimer = setTimeout(save, 150);
 }
 
 onMounted(async () => {
   await loadSettings();
 
-  // 监听来自菜单的设置变更事件（best-effort，不保证可靠）
+  // 监听来自菜单的设置变更事件
   unlistenSettings = await listen('settings-changed', (event: any) => {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     const s = event.payload;
-    isExternalUpdate = true;
     settings.aiEnabled = s.ai_enabled;
     settings.followEnabled = s.follow_enabled;
     settings.chaseEnabled = s.chase_enabled;
     settings.speedMultiplier = s.speed_multiplier;
     settings.alwaysOnTop = s.always_on_top;
     settings.spriteVariant = s.sprite_variant;
-    setTimeout(() => { isExternalUpdate = false; }, 100);
+    lastSaved = stateFingerprint();
   });
 
-  // 窗口获得焦点时主动拉取最新设置（可靠的兜底机制）
+  // 窗口获焦时拉取最新设置（兜底）
   unlistenFocus = await getCurrentWindow().listen('tauri://focus', () => {
+    if (saveTimer) return;
     loadSettings();
   });
 });
 
 onUnmounted(() => {
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; save(); }
   if (unlistenSettings) { unlistenSettings(); unlistenSettings = null; }
   if (unlistenFocus) { unlistenFocus(); unlistenFocus = null; }
 });
 
 watch(
   () => ({ ...settings }),
-  () => {
-    if (isExternalUpdate) return; // 外部事件触发的变更不需要保存（已经保存过了）
-    debouncedSave();
-  },
-  {},
+  () => { debouncedSave(); },
 );
 </script>
