@@ -1,33 +1,68 @@
 mod display;
 mod settings;
 
-use settings::{find_sprite, get_cursor_pos, list_sprites, load_settings, save_settings, upload_sprite, PetSettings};
+use settings::{confirm_sprite_upload, delete_sprite, find_sprite, get_cursor_pos, list_sprites, load_settings, read_sprite_preview, save_sprite_b64, save_settings, upload_sprite, PetSettings};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, WebviewWindow};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri_plugin_dialog::DialogExt;
 
 struct ContextMenu(Mutex<tauri::menu::Menu<tauri::Wry>>);
+struct TrayState(TrayIcon<tauri::Wry>);
+
+fn update_menu_text(state: &tauri::State<'_, ContextMenu>, id: &str, text: &str) {
+    if let Ok(ref mut m) = state.0.lock() {
+        if let Some(tauri::menu::MenuItemKind::MenuItem(ref item)) = m.get(id) {
+            let _ = item.set_text(text);
+        }
+    }
+}
+
+fn update_all_menus(app: &tauri::AppHandle) {
+    let (s, _) = load_settings(app);
+    let ft = if s.follow_enabled { "跟随鼠标 ✓" } else { "跟随鼠标" };
+    let ct = if s.chase_enabled { "追逐模式 ✓" } else { "追逐模式" };
+
+    if let Some(st) = app.try_state::<ContextMenu>() {
+        update_menu_text(&st, "follow", ft);
+        update_menu_text(&st, "chase", ct);
+
+        // Tray menu is a native snapshot — re-set to pick up updated item text
+        if let Some(ts) = app.try_state::<TrayState>() {
+            if let Ok(m) = st.0.lock() {
+                let _ = ts.0.set_menu(Some(m.clone()));
+            }
+        }
+    }
+}
 
 fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
     match id {
         "follow" => {
             let (mut s, _) = load_settings(app);
             s.follow_enabled = !s.follow_enabled;
+            if s.follow_enabled { s.chase_enabled = false; }
             let _ = save_settings(app, &s);
-            let txt = if s.follow_enabled { "跟随鼠标 ✓" } else { "跟随鼠标" };
-            // Update menu item text (shared by both window context menu and tray menu)
-            if let Some(st) = app.try_state::<ContextMenu>() {
-                if let Ok(ref mut m) = st.0.lock() {
-                    if let Some(tauri::menu::MenuItemKind::MenuItem(ref item)) = m.get("follow") {
-                        let _ = item.set_text(txt);
-                    }
-                }
-            }
+            update_all_menus(app);
             let sprite = find_sprite(app, &s.sprite_variant);
-            let _ = app.emit_to("main", "settings-changed", serde_json::json!({
+            let _ = app.emit("settings-changed", serde_json::json!({
                 "ai_enabled": s.ai_enabled, "follow_enabled": s.follow_enabled,
+                "chase_enabled": s.chase_enabled,
+                "speed_multiplier": s.speed_multiplier, "always_on_top": s.always_on_top,
+                "sprite_variant": s.sprite_variant, "sprite": sprite,
+            }));
+        }
+        "chase" => {
+            let (mut s, _) = load_settings(app);
+            s.chase_enabled = !s.chase_enabled;
+            if s.chase_enabled { s.follow_enabled = false; }
+            let _ = save_settings(app, &s);
+            update_all_menus(app);
+            let sprite = find_sprite(app, &s.sprite_variant);
+            let _ = app.emit("settings-changed", serde_json::json!({
+                "ai_enabled": s.ai_enabled, "follow_enabled": s.follow_enabled,
+                "chase_enabled": s.chase_enabled,
                 "speed_multiplier": s.speed_multiplier, "always_on_top": s.always_on_top,
                 "sprite_variant": s.sprite_variant, "sprite": sprite,
             }));
@@ -39,7 +74,7 @@ fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
             } else {
                 let _ = tauri::WebviewWindowBuilder::new(
                     app, "settings", tauri::WebviewUrl::App("settings.html".into())
-                ).title("设置").inner_size(480.0, 600.0).center().build();
+                ).title("设置").inner_size(660.0, 720.0).center().build();
             }
         }
         "about" => show_about_dialog(app),
@@ -107,6 +142,7 @@ fn get_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "ai_enabled": disk.ai_enabled,
         "follow_enabled": disk.follow_enabled,
+        "chase_enabled": disk.chase_enabled,
         "speed_multiplier": disk.speed_multiplier,
         "always_on_top": disk.always_on_top,
         "sprite_variant": disk.sprite_variant,
@@ -121,10 +157,12 @@ fn update_settings(app: tauri::AppHandle, settings: PetSettings) -> Result<(), S
         window.set_always_on_top(settings.always_on_top).map_err(|e| e.to_string())?;
     }
     save_settings(&app, &settings)?;
+    update_all_menus(&app);
     let sprite = find_sprite(&app, &settings.sprite_variant);
-    app.emit_to("main", "settings-changed", serde_json::json!({
+    app.emit("settings-changed", serde_json::json!({
         "ai_enabled": settings.ai_enabled,
         "follow_enabled": settings.follow_enabled,
+        "chase_enabled": settings.chase_enabled,
         "speed_multiplier": settings.speed_multiplier,
         "always_on_top": settings.always_on_top,
         "sprite_variant": settings.sprite_variant,
@@ -135,7 +173,7 @@ fn update_settings(app: tauri::AppHandle, settings: PetSettings) -> Result<(), S
 
 fn show_about_dialog(app: &tauri::AppHandle) {
     app.dialog()
-        .message("墨矩工坊 · 桌面宠物\nMoJu Tech · Desktop Pet\n\nv0.1.0-beta\n\n© 2026 墨矩工坊 MoJu Tech")
+        .message("墨矩工坊 · 桌面宠物\nMoJu Tech · Desktop Pet\n\nv0.2.0-beta\n\n© 2026 墨矩工坊 MoJu Tech")
         .title("关于")
         .show(|_| {});
 }
@@ -147,15 +185,20 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             move_pet, move_pet_absolute, get_position, get_window_physical_pos,
             show_context_menu, get_settings, update_settings,
-            list_sprites, upload_sprite, get_cursor_pos,
+            list_sprites, upload_sprite, confirm_sprite_upload, read_sprite_preview, save_sprite_b64, delete_sprite,
+            get_cursor_pos,
         ])
         .setup(|app| {
-            let follow_item = MenuItemBuilder::with_id("follow", "跟随鼠标").build(app.handle())?;
+            let (s, _) = load_settings(app.handle());
+            let follow_txt = if s.follow_enabled { "跟随鼠标 ✓" } else { "跟随鼠标" };
+            let chase_txt = if s.chase_enabled { "追逐模式 ✓" } else { "追逐模式" };
+            let follow_item = MenuItemBuilder::with_id("follow", follow_txt).build(app.handle())?;
+            let chase_item = MenuItemBuilder::with_id("chase", chase_txt).build(app.handle())?;
             let settings_item = MenuItemBuilder::with_id("settings", "设置").build(app.handle())?;
             let about = MenuItemBuilder::with_id("about", "关于").build(app.handle())?;
             let exit = MenuItemBuilder::with_id("exit", "退出").build(app.handle())?;
             let menu = MenuBuilder::new(app.handle())
-                .items(&[&follow_item, &settings_item, &about, &exit])
+                .items(&[&follow_item, &chase_item, &settings_item, &about, &exit])
                 .build()?;
 
             if let Some(window) = app.get_webview_window("main") {
@@ -165,15 +208,10 @@ pub fn run() {
                     let y = d.y + d.h - display::PET_H - 50;
                     window.set_position(tauri::PhysicalPosition::new(x, y)).ok();
                 }
-                let app_handle = app.handle().clone();
-                window.on_menu_event(move |_window, event| {
-                    let id = event.id().as_ref().to_string();
-                    handle_menu_event(&app_handle, &id);
-                });
             }
 
-            // System tray icon with the same menu
-            let _tray = TrayIconBuilder::with_id("main-tray")
+            // System tray icon — handles ALL menu events (tray + context menu) globally
+            let tray_icon = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("墨矩工坊 · 桌面宠物")
                 .menu(&menu)
@@ -184,6 +222,7 @@ pub fn run() {
                 .build(app)?;
 
             app.manage(ContextMenu(Mutex::new(menu)));
+            app.manage(TrayState(tray_icon));
             Ok(())
         })
         .run(tauri::generate_context!())

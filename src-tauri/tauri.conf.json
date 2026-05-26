@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicepage/nicepage/refs/heads/main/tauri.conf.schema.json",
   "productName": "MoJu Desktop Pet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.mojutech.desktop-pet",
   "build": {
     "frontendDist": "../dist"
@@ -39,8 +39,8 @@
         "label": "settings",
         "title": "设置 - 墨矩工坊桌面宠物",
         "url": "settings.html",
-        "width": 480,
-        "height": 600,
+        "width": 660,
+        "height": 720,
         "transparent": false,
         "decorations": true,
         "alwaysOnTop": false,
@@ -52,7 +52,10 @@
     ],
     "withGlobalTauri": true,
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
+      "assetProtocol": {
+        "scope": ["$APPDATA/**"]
+      }
     }
   }
 }
