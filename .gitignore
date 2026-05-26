@@ -5,3 +5,4 @@ dist/
 .DS_Store
 Thumbs.db
 src-tauri/target/
+CLAUDE.md
