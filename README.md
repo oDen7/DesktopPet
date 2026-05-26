@@ -90,45 +90,45 @@ cargo tauri build
 
 ## 精灵图生成 Prompt
 
-替换 `[角色特征]` 后可直接用于 AI 图像生成（DALL-E、Midjourney 等），输出标准 4×4 网格精灵图。
+用于 AI 图像生成（DALL-E、Midjourney、PixelLab 等），输出 1024×1024 标准 4×4 网格精灵图。替换 `Subject:` 后的角色描述即可适配不同宠物。
 
 ### English
 
 ```
-Professional 2D pixel art game sprite sheet, ultra-sharp 16-bit individual game assets. [Aspect Ratio: 1:1 perfectly square canvas]
+A professional 2D pixel art game sprite sheet of a single character, styled exactly like an official 16-bit retro video game asset. The final image must be generated on a 1024x1024 perfectly square canvas.
 
-Subject: [角色外观、衣服、颜色、体型，强调所有帧必须 100% 保持一致]
+Subject: A cute, chubby Golden Retriever puppy with thick, vibrant golden-yellow fluffy fur and a soft cream-colored chest. It features classic soft floppy ears, a feathered fluffy tail, and big, circular dark brown eyes with a friendly, joyful, and goofy expression. The puppy's size, shape, coat color, and body proportions must remain 100% mathematically consistent and identical across all 16 frames.
 
-Layout: A clean, perfectly aligned 4x4 matrix grid consisting of exactly 16 frames organized strictly into 4 horizontal rows with logical action transitions:
-- Row 1 (Idle/Static): 4 sequential frames, FULL FRONT VIEW. The character stands completely still, facing the camera, blinking its eyes peacefully, looking at the player. (No moving head, no turning around).
-- Row 2 (Walk): 4 sequential frames, STRICT LEFT-SIDE PROFILE VIEW. The character turns to the side and executes a smooth 4-frame walking/stepping loop as it moves horizontally.
-- Row 3 (Drag/Picked up): 4 sequential frames, FULL FRONT VIEW. The character is suspended in mid-air from its collar/scruff/top, body elongated vertically, with its arms and legs/paws flailing helplessly in a surprised expression. Strictly NO mouse cursors.
-- Row 4 (Fall): 4 sequential frames, FULL FRONT VIEW. Directly continuing the dangling pose from Row 3. As it falls downwards helplessly, its limbs are raised upwards, its eyes are closed tightly, and vertical speed lines appear behind it to simulate intense gravity.
+Layout configuration: The canvas must be organized into a perfectly clean, straight 4x4 matrix grid consisting of exactly 16 frames, divided into 4 horizontal rows. Each row must contain 4 sequential animation frames aligned perfectly horizontally and vertically:
+- Row 1 (Top Row): 4 frames, FULL FRONT VIEW. The Golden Retriever puppy stands completely still, facing the camera, blinking its eyes peacefully with a happy, smiling expression. (No body rotation, no turning around).
+- Row 2 (Second Row): 4 frames, STRICT LEFT-SIDE PROFILE VIEW. A smooth 4-frame walking cycle showing the puppy walking horizontally to the left, with its fluffy feathered tail wagging happily.
+- Row 3 (Third Row): 4 frames, FULL FRONT VIEW. The golden puppy is suspended in mid-air from its scruff, body elongated vertically, with all four paws dangling downwards helplessly in a surprised yet funny, derpy expression. Strictly NO human hands, NO fingers, and NO mouse cursors allowed in any frame.
+- Row 4 (Bottom Row): 4 frames, FULL FRONT VIEW. Directly continuing the dangling pose from Row 3, showing the puppy free-falling downwards with its eyes tightly closed, its paws raised upwards due to wind resistance, and vertical single-pixel speed lines around it to simulate intense gravity.
 
-Alpha & Transparency Control:
-The entire canvas must be isolated on a 100% solid, flat jet-black background (#000000). Every asset must have clean, razor-sharp single-pixel outlines. Strictly NO white padding, NO gray blurry anti-aliasing edges, NO background glow, and NO environment dust/debris artifacts. All negative space must be pure black to ensure seamless chroma-key transparency ripping.
+Technical Standards for PixelLab processing:
+The entire background of the canvas must be a 100% solid, flat, jet-black color (#000000) with absolutely NO gradients, NO shadows, and NO background glow. Every single frame must have razor-sharp, crisp pixel outlines with zero blurry anti-aliasing edges. All negative space must be pure dead black to allow clean transparency removal in post-processing.
 ```
 
 ### 中文
 
 ```
-专业2D像素风游戏精灵图大图，超高清晰度16位机游戏资产。【画面比例 1:1 正方形画布】
+专业 2D 像素风游戏精灵图，单角色，严格仿官方 16-bit 复古游戏资产风格。最终图像须生成为 1024×1024 完美正方形画布。
 
-角色主体：【角色外观、衣服、颜色、体型，强调所有帧必须 100% 保持一致】
+角色主体：一只可爱胖乎乎的金毛幼犬，拥有浓密鲜艳的金黄色蓬松毛发和柔和的奶油色胸部。经典柔软的垂耳，羽毛般蓬松的尾巴，圆圆的大眼睛呈深棕色，表情友好、快乐、带点傻气。幼犬的大小、体型、毛色和身体比例在所有 16 帧中必须保持 100% 数学一致且完全相同。
 
-网格布局：一个干净、完美对齐的4x4矩阵网格，严格包含16个帧，分为4个水平行，具备严格的动作因果过渡：
-- 第一行（静止/交互）：4帧连续序列，完全纯正面视角。角色完全静止站立，面对镜头，平静地眨着眼睛，看着玩家。（头部不允许晃动，不允许转身）。
-- 第二行（水平走路）：4帧连续序列，严格的纯左侧面视角。角色转向侧面，展示流畅的4帧横向迈步走路循环，用于水平移动。
-- 第三行（被鼠标抓起）：4帧连续序列，完全纯正面视角。角色仿佛被捏住后颈皮或衣领悬空提起来，身体纵向拉长，露出惊讶的表情，四肢无助地向下垂落并挥舞挣扎。严禁出现任何鼠标指针或人类手指图案。
-- 第四行（自由落体下落）：4帧连续序列，完全纯正面视角。动作必须是第三行被抓姿势的直接物理延续。在无助受重力下落时，其四肢因风阻向上扬起，紧闭双眼，身后出现垂直向上的速度线以模拟强烈的重力下落感。
+网格布局：画布须组织为一个干净笔直的 4×4 矩阵网格，严格包含 16 帧，分为 4 个水平行，每行 4 帧水平垂直完美对齐：
+- 第一行（顶部）：4 帧，完全正面视角。金毛幼犬完全静止站立，面对镜头，平静眨眼，带着快乐微笑的表情。（不允许身体旋转或转身）。
+- 第二行：4 帧，严格的纯左侧面视角。4 帧流畅的走路循环，幼犬水平向左行走，蓬松的羽毛尾巴快乐摇摆。
+- 第三行：4 帧，完全正面视角。金毛幼犬被捏住后颈悬在半空中，身体纵向拉长，四肢无助地向下垂落，露出惊讶又有趣的傻傻表情。严格禁止任何人手、手指、鼠标指针出现在任意帧中。
+- 第四行（底部）：4 帧，完全正面视角。直接延续第三行的悬空姿势，幼犬自由落体向下坠落，双眼紧闭，四肢因风阻向上扬起，周围有垂直单像素速度线以模拟强烈重力感。
 
-PixelLab透明通道与像素优化：
-整张画布必须处于100%纯黑背景（#000000）上。每个资产必须具有干净、锐利、没有模糊的单像素硬轮廓线。严禁任何白色填充、严禁灰色模糊的抗锯齿边缘（Anti-aliasing）、严禁背景发光或发散、严禁地面尘土、阴影或碎屑杂质。所有空白区域必须是绝对死黑，以确保在PixelLab中能完美一键抠图并生成透明通道。
+PixelLab 后处理技术标准：
+整张画布背景必须为 100% 纯黑（#000000），绝对没有任何渐变、阴影和背景发光。每一帧必须具有锐利清晰的像素轮廓，零模糊抗锯齿边缘。所有空白区域必须是纯死黑，以确保后处理中能干净去除背景生成透明通道。
 ```
 
 ### 使用步骤
 
-1. 将 Prompt 中的 `[角色特征]` 替换为目标角色描述
+1. 将 Prompt 中 `Subject:` 后的角色描述替换为目标角色
 2. 提交给 AI 图像生成工具，或使用 [PixelLab](https://www.pixellab.ai) → `Create` → `Animated object/character` 模式直接生成精灵图
 3. 将生成图放入 PixelLab → `Remove background` 抠黑底 → `Pixel art correction` 去毛边
 4. 导出 PNG，放入 `public/sprites/` 目录（应用会自动扫描注册）
