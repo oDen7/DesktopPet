@@ -1,12 +1,13 @@
 # 墨矩工坊 · 桌面宠物 (MoJu Desktop Pet)
 
-基于 Tauri v2 + Rust 的像素桌面宠物，支持多精灵切换、多显示器跨屏漫游、拖拽交互。
+基于 Tauri v2 + Rust 的像素桌面宠物，支持多精灵切换、多显示器跨屏漫游、拖拽交互、鼠标追逐。
 
 ## 技术栈
 
 - **Tauri v2** — Rust 后端，透明无边框置顶窗口
+- **TypeScript** — 宠物引擎（AI 决策、移动物理、精灵渲染）
 - **Vue 3 + TypeScript** — 设置面板
-- **Vite** — 多页构建 (宠物窗口 + 设置窗口)
+- **Vite** — 多页构建（宠物窗口 + 设置窗口）
 - **Less** — CSS 预处理
 - **CSS Steps** — 精灵图逐帧动画
 
@@ -14,7 +15,7 @@
 
 ```bash
 npm install
-npm run dev       # 开发模式 (前端热更新 + Tauri 窗口)
+npm run dev       # 开发模式（前端热更新 + Tauri 窗口）
 npm run build     # 构建生产版本
 ```
 
@@ -32,60 +33,123 @@ cargo tauri build
 ├── vite.config.ts
 ├── tsconfig.json
 ├── src/
-│   ├── index.html               # 宠物窗口 (vanilla JS + 路径算法)
-│   ├── pet.less                 # 精灵图逐帧动画样式
-│   ├── settings.html            # 设置窗口入口
-│   └── settings/                # Vue 3 设置应用
+│   ├── index.html                     # 宠物窗口入口（128×128 无边框透明）
+│   ├── pet.less                       # 精灵图逐帧动画样式
+│   ├── settings.html                  # 设置窗口入口
+│   ├── pet/                           # 宠物引擎（TypeScript 模块化架构）
+│   │   ├── main.ts                    # 入口：Tauri 事件绑定 + 启动流程
+│   │   ├── export.ts                  # 公共 API 统一导出（barrel）
+│   │   ├── state/                     # 数据层
+│   │   │   ├── types.ts               # 类型与接口定义
+│   │   │   ├── state.ts               # 共享可变状态对象 S
+│   │   │   ├── constants.ts           # 物理常量 + 方向数学工具
+│   │   │   └── index.ts
+│   │   ├── behaviors/                 # 行为层
+│   │   │   ├── brain.ts               # AI 决策引擎（时段修正、热点记忆）
+│   │   │   ├── chase.ts               # 追逐/逃离状态机
+│   │   │   ├── movement.ts            # 每帧移动执行（跟随/AI 漫游/物理）
+│   │   │   └── index.ts
+│   │   ├── rendering/                 # 渲染层
+│   │   │   ├── render.ts              # 视觉状态 → DOM（CSS 类名 + 精灵行）
+│   │   │   ├── sprite.ts              # 精灵图加载与动画注入
+│   │   │   ├── display.ts             # 多显示器几何计算
+│   │   │   └── index.ts
+│   │   └── input/                     # 交互层
+│   │       ├── drag.ts                # 鼠标拖拽 + 右键菜单
+│   │       └── index.ts
+│   └── settings/                      # Vue 3 设置应用
 │       ├── main.ts
 │       ├── App.vue
 │       ├── style.less
 │       └── components/
-│           ├── ToggleSetting.vue # 开关组件
-│           ├── SpeedControl.vue  # 速度滑块
-│           └── SpritePicker.vue  # 精灵选择 & 上传
+│           ├── ToggleSetting.vue      # 开关组件
+│           ├── SpeedControl.vue       # 速度滑块
+│           ├── SpritePicker.vue       # 精灵选择 & 上传
+│           └── SpriteEditor.vue       # 精灵裁剪预览
 ├── public/
-│   └── sprites/                 # 预设精灵 PNG (4×4 网格)
-├── src-tauri/                   # Rust 后端
+│   └── sprites/                       # 预设精灵 PNG
+├── src-tauri/                         # Rust 后端
 │   ├── tauri.conf.json
 │   ├── Cargo.toml
-│   ├── capabilities/
 │   └── src/
-│       ├── main.rs              # 入口
-│       ├── lib.rs               # Tauri 命令 + 菜单 + 窗口管理
-│       ├── display.rs           # 多显示器工作区检测 + 边界 clamp
-│       └── settings.rs          # 设置持久化 + 精灵库扫描
-└── dist/                        # 前端构建输出
+│       ├── main.rs                    # 入口 + Windows 控制台屏蔽
+│       ├── lib.rs                     # Tauri 命令 + 托盘菜单 + 窗口管理
+│       ├── display.rs                 # 多显示器工作区检测 + 坐标钳制
+│       └── settings.rs                # 设置持久化 + 精灵库管理 + Base64 编解码
+└── dist/                              # 前端构建输出
 ```
 
 ## 交互
 
 | 操作 | 行为 |
 |------|------|
-| 鼠标拖拽 | 抓起宠物，松手后自由落体 |
-| 右键 | 原生菜单 (跟随鼠标 / 设置 / 关于 / 退出) |
-| AI 漫游 | 步长规划 + 正弦摆动，走-歇-走节奏 |
-| 多屏跨屏 | 自动检测所有显示器工作区，接缝处平滑穿越 |
+| 鼠标拖拽 | 抓起宠物自由移动，松手后自由落体 |
+| 右键 | 原生菜单（跟随鼠标 / 追逐模式 / 设置 / 关于 / 退出） |
+| AI 漫游 | 步长规划 + 正弦摆动 + 缓入缓出速度曲线，走-歇-走自然节奏 |
+| 跟随鼠标 | 八方向平滑跟随，< 8px 停止避免抖动 |
+| 追逐模式 | 宠物逃离鼠标 + 静止时靠近，含冲刺/弹墙/闪避多状态 |
+| 多屏跨屏 | 显示器接缝自动检测，无缝穿越异形屏幕组合 |
 
-## AI 路径算法
+## 宠物引擎架构
 
-基于步长规划的速度向量系统：
+基于共享状态的模块化设计，所有子系统直接读写 `S` 对象：
 
-- **智能规划器** — 每 1.5~3 秒产出一个计划 (方向 + 步数 + 是否暂停)
-- **8 方向加权选择** — 边缘回避 + 桌面中心引力 + 反对角线偏置 + 随机抖动
-- **正弦摆动** — 在选定方向叠加垂直正弦扰动，路径自然不僵硬
-- **物理反弹** — 碰壁后离散方向反射 + 角度噪声，墙角独立处理
-- **接缝检测** — 逐显示器逐边判断是否相邻屏幕，接缝方向不回避可穿过
-- **多显示器** — 中心点重叠判定，支持 L 形等异形屏幕组合
+```
+main.ts (入口 + 事件绑定)
+  ├── state/        S 共享状态 + 常量 + 类型
+  ├── behaviors/    每帧 tick → 模式分发 → AI/跟随/追逐
+  │   ├── brain     1.5~3s 定时决策，八方向权重投票
+  │   ├── chase     鼠标活性检测 → 逃离/靠近状态机
+  │   └── movement  requestAnimationFrame 主循环
+  ├── rendering/    CSS 精灵图切换 + 多显示器布局
+  │   ├── render    状态 → DOM（类名、行偏移、动画速度）
+  │   ├── sprite    精灵图加载（预设 URL / 用户 base64）
+  │   └── display   屏幕边界、舒适区、越界预测
+  └── input/        拖拽位移计算 + 右键菜单触发
+```
+
+### 移动算法
+
+- **八方向行走**：8 个单位向量（含 cos45° 对角线归一化），方向平滑过渡
+- **边缘回避**：距屏幕边缘 < 200px 时二次方斥力转向，接缝方向穿越不受阻
+- **正弦抖动**：双频叠加（0.1 + 0.23 Hz），模拟自然行走左右摇摆
+- **速度曲线**：前 15% 缓入 → 中间匀速 → 后 15% 缓出
+- **墙壁反弹**：被边缘阻挡后方向反射 + 角度噪声，墙角朝桌面中心弹射
+- **时段修正**：深夜(23-6)降速 50% 偏好休息，清晨(6-9)降速 20%，白天全速
+
+### 追逐/逃离状态机
+
+```
+鼠标活跃移动 → 逃离（flee）
+  ├── Panic: 紧迫度提升，逃离速度加权 x2
+  ├── Burst: 短距冲刺（2.5x 速度）
+  ├── Bounce: 碰壁后弹射转向 + 随机抖动
+  ├── Dodge: 鼠标 < 80px 时侧向闪避（冷却 60~90 帧）
+  └── Corner: 角落紧急朝桌面中心弹射
+
+鼠标静止 > 1.5s → 靠近（approach）
+  ├── 距离权重：越近休息概率越高（< 50px → 70%）
+  ├── Settled: < 120px 且稳定时不再移动
+  └── 随机行走：朝鼠标方向慢速靠近
+```
 
 ## 设置
 
 通过右键菜单打开设置窗口，可调整：
 
 - AI 自动漫游开关
-- 跟随鼠标开关
-- 移动速度 (0.25x ~ 3x)
+- 跟随鼠标开关（与追逐模式互斥）
+- 追逐模式开关（与跟随鼠标互斥）
+- 移动速度（0.25x ~ 3x）
 - 窗口置顶
-- 宠物形象 (预设 + 用户上传)
+- 宠物形象（预设 4 款 + 用户上传，支持裁剪预览）
+
+## 安全策略
+
+- **CSP**：`default-src 'self'`，限制脚本和样式来源
+- **Asset Protocol**：作用域收窄为 `$APPDATA/**`，仅允许读取应用数据目录
+- **路径遍历防护**：文件路径 canonicalize 后检查目录归属，拒绝 `..` 注入
+- **上传校验**：PNG 魔术字节校验 + 文件名过滤 + 5MB 大小限制
 
 ## 精灵图生成 Prompt
 
@@ -131,4 +195,4 @@ PixelLab 后处理技术标准：
 2. 提交给 AI 图像生成工具，或使用 [PixelLab](https://www.pixellab.ai) → `Create` → `Animated object/character` 模式直接生成精灵图
 3. 将生成图放入 PixelLab → `Remove background` 抠黑底 → `Pixel art correction` 去毛边
 4. 导出 PNG，放入 `public/sprites/` 目录（应用会自动扫描注册）
-5. 若精灵图尺寸非标准 4×4 均分，在 `src/index.html` 的 `SPRITE_ADJUST` 中配置 `{ w, h }` 或 `{ rowH: [...] }`
+5. 若非标准正方形精灵，在 `src/pet/rendering/sprite.ts` 的 `SPRITE_ADJUST` 中配置高度覆写值
