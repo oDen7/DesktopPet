@@ -6,3 +6,4 @@ dist/
 Thumbs.db
 src-tauri/target/
 CLAUDE.md
+.vscode/

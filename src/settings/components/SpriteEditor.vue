@@ -28,18 +28,47 @@
   </div>
 </template>
 
+<!--
+  精灵图上传预览编辑器。
+  在用户确认上传前，在 Canvas 上并排展示用户图片和参考模板，
+  叠加 4×4 红色网格线帮助用户判断帧对齐。
+
+  验证规则：
+    - 宽高必须为 4 的整数倍 → 每行 4 帧才能均匀切分
+    - 宽高应相等（正方形）→ 帧格为正方形动画效果最佳
+    - 不满足条件时显示警告但允许上传
+
+  Props:
+    dataUrl  — 用户选中图片的 Data URL (data:image/png;base64,...)
+    fileName — 文件名（不含扩展名），用于建议的精灵 ID
+
+  Events:
+    confirm — 用户点击"确认上传"
+    cancel  — 用户点击"取消"或点击遮罩层
+-->
+
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 
 const props = defineProps<{ dataUrl: string; fileName: string }>();
 defineEmits<{ confirm: []; cancel: [] }>();
 
+/// Canvas 渲染尺寸（CSS 像素）— 两个 canvas 使用相同尺寸
 const CANVAS_SIZE = 280;
 const userCanvas = ref<HTMLCanvasElement>();
 const templateCanvas = ref<HTMLCanvasElement>();
 const userInfo = ref('');
 const warnMsg = ref('');
 
+/**
+ * 在 Canvas 上绘制 4×4 红色网格参考线。
+ *
+ * @param ctx      — Canvas 2D 上下文
+ * @param imgW     — 原始图片宽度
+ * @param imgH     — 原始图片高度
+ * @param canvasW  — Canvas 元素宽度
+ * @param canvasH  — Canvas 元素高度
+ */
 function draw4x4Grid(
   ctx: CanvasRenderingContext2D,
   imgW: number,
@@ -53,7 +82,7 @@ function draw4x4Grid(
   const ox = (canvasW - dw) / 2;
   const oy = (canvasH - dh) / 2;
 
-  // 4×4 grid lines (red solid)
+  // 4×4 网格线（红色实线）
   ctx.strokeStyle = 'rgba(220, 50, 50, 0.7)';
   ctx.lineWidth = 1.5;
   ctx.setLineDash([]);
@@ -72,12 +101,19 @@ function draw4x4Grid(
     ctx.stroke();
   }
 
-  // Outer border
+  // 外边框（红色加粗）
   ctx.strokeStyle = 'rgba(220, 50, 50, 0.9)';
   ctx.lineWidth = 2;
   ctx.strokeRect(ox, oy, dw, dh);
 }
 
+/**
+ * 将图片加载到 Canvas 并叠加网格线。
+ *
+ * @param src      — 图片源（URL 或 Data URL）
+ * @param canvas   — 目标 Canvas 元素
+ * @param showInfo — 是否显示尺寸信息和验证结果
+ */
 function loadImageToCanvas(
   src: string,
   canvas: HTMLCanvasElement | undefined,
@@ -120,10 +156,10 @@ function loadImageToCanvas(
 }
 
 onMounted(() => {
-  // Load user's image directly from data URL (no Rust call needed)
+  // 加载用户图片（Data URL，不需要经过 Rust）
   loadImageToCanvas(props.dataUrl, userCanvas.value, true);
 
-  // Load template from resource URL
+  // 加载参考模板（预设 blackcat 精灵图）
   loadImageToCanvas('/sprites/blackcat.png', templateCanvas.value, false);
 });
 </script>

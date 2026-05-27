@@ -1,6 +1,44 @@
+//! 设置持久化与精灵图管理模块。
+//!
+//! ## 功能分组
+//!
+//! ### 设置持久化
+//! * `PetSettings` — 用户配置结构体，JSON 序列化存储于 `$APPDATA/settings.json`
+//! * `load_settings()` — 从磁盘读取设置，失败时返回默认值 + 诊断日志
+//! * `save_settings()` — 写入设置到磁盘（pretty-printed JSON）
+//!
+//! ### 精灵图管理
+//! * `list_sprites` — 列出所有可用精灵图（预设 + 用户上传）
+//! * `get_preset_sprites()` — 扫描预设精灵目录（开发/生产多路径回退）
+//! * `find_sprite()` — 根据 ID 查找单个精灵图配置
+//! * `save_sprite_b64` — 解码 base64 PNG 并保存到用户精灵目录
+//! * `read_sprite_preview` — 读取用户精灵图的 base64 缩略图（带路径安全检查）
+//! * `delete_sprite` — 删除用户精灵图文件（禁止删除预设）
+//!
+//! ### 鼠标查询
+//! * `get_cursor_pos` — 通过 enigo 库查询鼠标物理屏幕坐标
+//!
+//! ## 安全说明
+//!
+//! * `read_sprite_preview` 和 `delete_sprite` 均包含路径遍历检查：
+//!   解析后的路径必须在 `$APPDATA/sprites/` 目录内
+//! * `save_sprite_b64` 校验 PNG 文件头 + 5MB 输入上限
+//! * 自实现 base64 编解码器，不依赖外部 crate
+
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+// ─── 设置数据结构 ─────────────────────────────────────────
+
+/// 用户配置 — JSON 序列化存储于 `$APPDATA/settings.json`。
+///
+/// 字段对应设置面板中的各个控件：
+/// * `ai_enabled` — AI 自动漫游开关
+/// * `follow_enabled` — 鼠标跟随模式（与 chase_enabled 互斥）
+/// * `chase_enabled` — 追逐/逃离模式（与 follow_enabled 互斥）
+/// * `speed_multiplier` — 移动速度倍率（0.25 ~ 3.0）
+/// * `always_on_top` — 宠物窗口置顶
+/// * `sprite_variant` — 当前选择的精灵图 ID
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PetSettings {
     pub ai_enabled: bool,
@@ -25,11 +63,19 @@ impl Default for PetSettings {
     }
 }
 
+/// 获取设置文件的完整路径。
 fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("settings.json"))
 }
 
+/// 从磁盘加载用户设置。
+///
+/// 返回值包含两个部分：
+///   (PetSettings, String) — 设置对象 + 诊断日志字符串
+///
+/// 日志记录加载来源（文件路径）或失败原因，
+/// 供设置面板调试信息区域显示。
 pub fn load_settings(app: &tauri::AppHandle) -> (PetSettings, String) {
     let path = settings_path(app);
     let path_str = path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|e| e.clone());
@@ -48,6 +94,9 @@ pub fn load_settings(app: &tauri::AppHandle) -> (PetSettings, String) {
     (PetSettings::default(), format!("path error: {}", path_str))
 }
 
+/// 保存用户设置到磁盘。
+///
+/// 自动创建父目录（`$APPDATA/`），以 prettified JSON 格式写入。
 pub fn save_settings(app: &tauri::AppHandle, settings: &PetSettings) -> Result<(), String> {
     let path = settings_path(app)?;
     if let Some(parent) = path.parent() {
@@ -57,6 +106,10 @@ pub fn save_settings(app: &tauri::AppHandle, settings: &PetSettings) -> Result<(
     std::fs::write(&path, data).map_err(|e| e.to_string())
 }
 
+/// 根据精灵 ID 查找单个精灵图配置。
+///
+/// 先在预设列表中搜索，再到用户精灵目录搜索。
+/// 用户精灵通过读取 PNG 文件头获取实际宽高。
 pub fn find_sprite(app: &tauri::AppHandle, id: &str) -> Option<SpriteInfo> {
     for s in get_preset_sprites(app) {
         if s.id == id {
@@ -80,6 +133,9 @@ pub fn find_sprite(app: &tauri::AppHandle, id: &str) -> Option<SpriteInfo> {
     None
 }
 
+/// 查询鼠标光标当前物理屏幕坐标。
+///
+/// 使用 enigo 库跨平台查询，前端每 50ms 轮询一次。
 #[tauri::command]
 pub fn get_cursor_pos() -> Result<serde_json::Value, String> {
     use enigo::Mouse;
@@ -89,23 +145,31 @@ pub fn get_cursor_pos() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "x": x, "y": y }))
 }
 
-// ---- Sprite Library ----
+// ─── 精灵图管理 ───────────────────────────────────────────
 
+/// 精灵图元信息 — 由精灵库扫描/查询生成，序列化为 JSON 返回前端。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpriteInfo {
+    /// 精灵图唯一 ID（文件名去掉 .png 扩展名）
     pub id: String,
+    /// 显示名称
     pub name: String,
+    /// 是否为预设精灵（预设不可删除）
     pub is_preset: bool,
-    /// Raw PNG image width / height (e.g. 256, 512)
+    /// PNG 图片原始宽度（像素），用于计算帧格尺寸
     pub w: u32,
+    /// PNG 图片原始高度（像素）
     pub h: u32,
-    /// URL for the webview: presets are /sprites/xxx.png, user sprites are file system paths
+    /// 图片 URL：预设使用相对路径 `/sprites/xxx.png`，用户使用文件系统路径
     pub url: String,
 }
 
+/// 读取 PNG 文件的 IHDR 头获取图片宽高。
+///
+/// PNG 格式：8 字节签名 → 4 字节长度 → 4 字节 "IHDR" →
+/// 4 字节宽度（Big Endian） → 4 字节高度（Big Endian）
 fn read_png_size(path: &std::path::Path) -> Option<(u32, u32)> {
     let data = std::fs::read(path).ok()?;
-    // PNG signature: 8 bytes, then IHDR at byte 8
     if data.len() < 24 { return None; }
     if &data[0..8] != b"\x89PNG\r\n\x1a\n" { return None; }
     if &data[12..16] != b"IHDR" { return None; }
@@ -114,6 +178,9 @@ fn read_png_size(path: &std::path::Path) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
+/// 扫描指定目录下的所有 PNG 文件，返回 SpriteInfo 列表。
+///
+/// 按精灵 ID 字母序排序以保证前端展示顺序稳定。
 fn scan_sprites_dir(dir: &std::path::Path, is_preset: bool, url_prefix: &str) -> Vec<SpriteInfo> {
     let mut sprites = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -145,27 +212,40 @@ fn scan_sprites_dir(dir: &std::path::Path, is_preset: bool, url_prefix: &str) ->
     sprites
 }
 
+/// 获取所有预设精灵图列表。
+///
+/// ## 搜索路径优先级
+///
+/// 为支持开发（dev server）和生产（bundle）两种运行模式，
+/// 按以下顺序尝试多个路径：
+///
+/// 1. `{cwd}/public/sprites` — 开发模式：正在使用的源码目录
+/// 2. `{cwd}/dist/sprites` — 开发模式：构建输出目录
+/// 3. `{CARGO_MANIFEST_DIR}/../public/sprites` — 备选开发路径
+/// 4. `{CARGO_MANIFEST_DIR}/../dist/sprites` — 备选构建路径
+/// 5. `{resource_dir}/public/sprites` — 生产模式：Tauri 打包资源目录
+///
+/// 首个包含至少一个 PNG 文件的目录即为有效路径。
+/// 全部失败时使用硬编码回退列表。
 pub fn get_preset_sprites(app: &tauri::AppHandle) -> Vec<SpriteInfo> {
-    use tauri::Manager;
     let mut tried = Vec::new();
 
-    // Collect candidate dirs:
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
-    // 1. Dev paths: live source directories (reflect real-time changes)
+    // 开发路径：当前工作目录（dev server 实时反映文件变更）
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join("public").join("sprites"));
         candidates.push(cwd.join("dist").join("sprites"));
     }
 
-    // 2. Dev paths: relative to CARGO_MANIFEST_DIR
+    // 开发路径：相对于 Cargo.toml 所在目录
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         let base = std::path::PathBuf::from(&manifest);
         candidates.push(base.join("..").join("public").join("sprites"));
         candidates.push(base.join("..").join("dist").join("sprites"));
     }
 
-    // 3. Bundle resources (production fallback: build-time copy)
+    // 生产路径：Tauri bundle 资源目录
     if let Ok(res_dir) = app.path().resource_dir() {
         candidates.push(res_dir.join("public").join("sprites"));
     }
@@ -180,7 +260,7 @@ pub fn get_preset_sprites(app: &tauri::AppHandle) -> Vec<SpriteInfo> {
         }
     }
 
-    // Fallback: hardcoded presets (should rarely be hit now)
+    // 全部失败 — 硬编码回退（确保基本功能可用）
     eprintln!("[desktop-pet] preset scan tried: {:?}, using fallback", tried);
     vec![
         SpriteInfo {
@@ -202,11 +282,13 @@ pub fn get_preset_sprites(app: &tauri::AppHandle) -> Vec<SpriteInfo> {
     ]
 }
 
+/// 列出所有可用精灵图（Tauri 命令）。
+///
+/// 合并预设精灵和用户上传精灵的完整列表。
 #[tauri::command]
 pub fn list_sprites(app: tauri::AppHandle) -> Result<Vec<SpriteInfo>, String> {
     let mut sprites = get_preset_sprites(&app);
 
-    // Scan user-uploaded sprites
     if let Ok(data_dir) = app.path().app_data_dir() {
         let user_dir = data_dir.join("sprites");
         sprites.append(&mut scan_sprites_dir(&user_dir, false, ""));
@@ -215,55 +297,19 @@ pub fn list_sprites(app: tauri::AppHandle) -> Result<Vec<SpriteInfo>, String> {
     Ok(sprites)
 }
 
-#[tauri::command]
-pub fn upload_sprite(app: tauri::AppHandle) -> Result<Option<SpriteInfo>, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let file = app
-        .dialog()
-        .file()
-        .add_filter("PNG 图片", &["png"])
-        .blocking_pick_file();
-
-    let Some(file_path) = file else {
-        return Ok(None); // user cancelled
-    };
-
-    let path = file_path.as_path().ok_or("invalid file path")?;
-
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let user_dir = data_dir.join("sprites");
-    std::fs::create_dir_all(&user_dir).map_err(|e| e.to_string())?;
-
-    let filename = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("uploaded.png");
-    let dest = user_dir.join(filename);
-
-    std::fs::copy(path, &dest).map_err(|e| e.to_string())?;
-
-    let id = dest
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let (w, h) = read_png_size(&dest).unwrap_or((512, 512));
-    Ok(Some(SpriteInfo {
-        id: id.clone(),
-        name: id,
-        is_preset: false,
-        w,
-        h,
-        url: dest.to_string_lossy().to_string(),
-    }))
-}
-
-/// Save base64-encoded PNG data to the user sprites directory.
+/// 保存用户上传的 base64 PNG 精灵图（Tauri 命令）。
+///
+/// ## 安全检查
+///
+/// * 输入限制 5MB base64 字符串（约 3.75MB 解码后）
+/// * 校验解码后数据为有效 PNG 文件（文件头 magic bytes）
+/// * 文件名过滤 — 仅保留 ASCII 字母、数字、下划线、连字符
+///
+/// @param filename — 文件名（不含扩展名）
+/// @param b64 — base64 编码的 PNG 图片数据
+/// @returns 新创建的 SpriteInfo
 #[tauri::command]
 pub fn save_sprite_b64(app: tauri::AppHandle, filename: String, b64: String) -> Result<SpriteInfo, String> {
-    // Reject excessively large inputs (5 MB base64 ≈ 3.75 MB decoded)
     if b64.len() > 5 * 1024 * 1024 {
         return Err("Image too large (max 5 MB)".into());
     }
@@ -290,6 +336,12 @@ pub fn save_sprite_b64(app: tauri::AppHandle, filename: String, b64: String) -> 
     })
 }
 
+// ─── Base64 编解码器 ──────────────────────────────────────
+
+/// 自实现 base64 解码器（不依赖 base64 crate）。
+///
+/// 使用编译期预计算的查找表（DECODE array），
+/// 正确处理 padding（=）和截断输入。
 fn base64_decode(b64: &str) -> Result<Vec<u8>, String> {
     const DECODE: [i8; 128] = {
         let mut t = [-1i8; 128];
@@ -307,14 +359,20 @@ fn base64_decode(b64: &str) -> Result<Vec<u8>, String> {
     while i < bytes.len() {
         if bytes[i] == b'=' { break; }
         let b0 = DECODE.get(bytes[i] as usize).copied().unwrap_or(-1);
-        let b1 = DECODE.get(bytes.get(i + 1).copied().unwrap_or(b'A') as usize).copied().unwrap_or(-1);
-        let b2 = DECODE.get(bytes.get(i + 2).copied().unwrap_or(b'A') as usize).copied().unwrap_or(-1);
-        let b3 = DECODE.get(bytes.get(i + 3).copied().unwrap_or(b'A') as usize).copied().unwrap_or(-1);
+        let b1 = if i + 1 < bytes.len() && bytes[i + 1] != b'=' {
+            DECODE.get(bytes[i + 1] as usize).copied().unwrap_or(-1)
+        } else { -1 };
         if b0 < 0 || b1 < 0 { break; }
         out.push(((b0 as u32) << 2 | (b1 as u32) >> 4) as u8);
+        let b2 = if i + 2 < bytes.len() && bytes[i + 2] != b'=' {
+            DECODE.get(bytes[i + 2] as usize).copied().unwrap_or(-1)
+        } else { -1 };
         if b2 >= 0 {
             out.push(((b1 as u32) << 4 | (b2 as u32) >> 2) as u8);
         }
+        let b3 = if i + 3 < bytes.len() && bytes[i + 3] != b'=' {
+            DECODE.get(bytes[i + 3] as usize).copied().unwrap_or(-1)
+        } else { -1 };
         if b3 >= 0 {
             out.push(((b2 as u32) << 6 | b3 as u32) as u8);
         }
@@ -323,16 +381,23 @@ fn base64_decode(b64: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Read a PNG file and return its base64-encoded content for canvas preview.
+/// 读取用户精灵图并返回其 base64 编码内容（Tauri 命令）。
+///
+/// ## 安全检查
+///
+/// * 路径解析 — 将输入路径 canonicalize 为绝对路径
+/// * 目录限制 — 禁止读取 `$APPDATA/sprites/` 之外的任何文件
+/// * 文件类型 — 仅允许 PNG 文件
 #[tauri::command]
 pub fn read_sprite_preview(app: tauri::AppHandle, path: String) -> Result<String, String> {
-    // Resolve both the requested path and app data dir to canonical form
     let resolved = std::path::Path::new(&path)
         .canonicalize()
         .map_err(|_| "Invalid path".to_string())?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let resolved_data_dir = data_dir.canonicalize().map_err(|_| "Cannot resolve app data dir".to_string())?;
-    if !resolved.starts_with(&resolved_data_dir) {
+    let resolved_sprites_dir = data_dir.join("sprites")
+        .canonicalize()
+        .map_err(|_| "Cannot resolve sprites dir".to_string())?;
+    if !resolved.starts_with(&resolved_sprites_dir) {
         return Err("Access denied".into());
     }
     let data = std::fs::read(&resolved).map_err(|e| e.to_string())?;
@@ -342,6 +407,9 @@ pub fn read_sprite_preview(app: tauri::AppHandle, path: String) -> Result<String
     Ok(base64_encode(&data))
 }
 
+/// 自实现 base64 编码器（不依赖 base64 crate）。
+///
+/// 标准 base64 编码，自动处理 padding（1-2 个 = 号）。
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
@@ -366,60 +434,30 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-/// Copy the selected file into app data dir and register it as a user sprite.
-#[tauri::command]
-pub fn confirm_sprite_upload(app: tauri::AppHandle, path: String) -> Result<SpriteInfo, String> {
-    let src = std::path::Path::new(&path);
-
-    // Reject files larger than 10 MB
-    let meta = src.metadata().map_err(|e| format!("Cannot read file: {}", e))?;
-    if meta.len() > 10 * 1024 * 1024 {
-        return Err("File too large (max 10 MB)".into());
-    }
-
-    // Verify PNG header before copying
-    {
-        use std::io::Read;
-        let mut f = std::fs::File::open(src).map_err(|e| format!("Cannot open file: {}", e))?;
-        let mut header = [0u8; 8];
-        f.read_exact(&mut header).map_err(|_| "Cannot read file header".to_string())?;
-        if &header != b"\x89PNG\r\n\x1a\n" {
-            return Err("Not a valid PNG file".into());
-        }
-    }
-
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let user_dir = data_dir.join("sprites");
-    std::fs::create_dir_all(&user_dir).map_err(|e| e.to_string())?;
-
-    let filename = src.file_name().and_then(|s| s.to_str()).unwrap_or("uploaded.png");
-    let dest = user_dir.join(filename);
-    std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
-
-    let id = dest.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
-    let (w, h) = read_png_size(&dest).unwrap_or((512, 512));
-    Ok(SpriteInfo {
-        id: id.clone(),
-        name: id,
-        is_preset: false,
-        w,
-        h,
-        url: dest.to_string_lossy().to_string(),
-    })
-}
-
-/// Delete a user-uploaded sprite file. Preset sprites cannot be deleted.
+/// 删除用户上传的精灵图文件（Tauri 命令）。
+///
+/// ## 安全检查
+///
+/// * 仅允许删除 `$APPDATA/sprites/` 内的文件
+/// * 预设精灵图不存在于此目录，天然受保护
 #[tauri::command]
 pub fn delete_sprite(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    // Reject path separators and parent-directory traversal in the id
+    if id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err("Invalid sprite id".into());
+    }
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let path = data_dir.join("sprites").join(format!("{}.png", id));
     if !path.exists() {
         return Err("File not found".into());
     }
-    // Safety check: only delete files inside the app's sprites directory
+    // Canonicalize both paths before checking containment — Path::starts_with
+    // is purely lexical and does not resolve ".." components.
+    let resolved = path.canonicalize().map_err(|_| "Invalid path".to_string())?;
     let user_dir = data_dir.join("sprites");
-    if !path.starts_with(&user_dir) {
-        return Err("Invalid sprite path".into());
+    let resolved_user_dir = user_dir.canonicalize().map_err(|_| "Cannot resolve sprites dir".to_string())?;
+    if !resolved.starts_with(&resolved_user_dir) {
+        return Err("Access denied".into());
     }
-    std::fs::remove_file(&path).map_err(|e| e.to_string())
+    std::fs::remove_file(&resolved).map_err(|e| e.to_string())
 }

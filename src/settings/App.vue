@@ -19,7 +19,28 @@
   </div>
 </template>
 
+<!--
+  设置面板 — 主组件。
+
+  功能：
+    - 提供 AI 漫游 / 鼠标跟随 / 追逐模式开关
+    - 移动速度滑块 (0.25x-3x)
+    - 窗口置顶开关
+    - 精灵图选择器（预设 + 用户上传）
+    - 所有修改通过防抖写入 Rust 端持久化
+
+  通信机制：
+    - 读：invoke('get_settings') 从 Rust 加载当前设置
+    - 写：Vue watch 驱动 150ms 防抖 → invoke('update_settings')
+    - 外部变更：Rust 端通过 settings-changed 事件推送
+    - 窗口获焦：重新拉取设置（兜底同步）
+-->
+
 <script setup lang="ts">
+/**
+ * 响应式设置对象 — 与 Rust 端 PetSettings 结构对应。
+ * 每个字段通过 v-model 绑定到对应子组件。
+ */
 import { reactive, ref, onMounted, onUnmounted, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -37,7 +58,9 @@ const settings = reactive({
   spriteVariant: 'blackcat',
 });
 
-// 跟随和追逐互斥
+/**
+ * 跟随和追逐模式互斥 — 开启一个时自动关闭另一个。
+ */
 function onFollowChange(val: boolean) { if (val) settings.chaseEnabled = false; }
 function onChaseChange(val: boolean) { if (val) settings.followEnabled = false; }
 
@@ -46,10 +69,18 @@ const errorMsg = ref('');
 const debugInfo = ref('');
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let lastSaved = ''; // 用已保存状态的 JSON 指纹防止 echo 循环
+
+/**
+ * 上次成功写入 Rust 端的设置状态指纹。
+ * 用于防止 echo 循环 — 如果 Rust 端回报的变更
+ * 与当前保存的状态一致，则跳过重复保存。
+ */
+let lastSaved = '';
+
 let unlistenSettings: (() => void) | null = null;
 let unlistenFocus: (() => void) | null = null;
 
+/// 生成当前设置状态的 JSON 指纹
 function stateFingerprint() {
   return JSON.stringify({
     ai_enabled: settings.aiEnabled,
@@ -61,6 +92,7 @@ function stateFingerprint() {
   });
 }
 
+/// 从 Rust 端加载当前设置
 async function loadSettings() {
   try {
     const s: any = await invoke('get_settings');
@@ -77,10 +109,11 @@ async function loadSettings() {
   }
 }
 
+/// 保存当前设置到 Rust 端（JSON 持久化 + 宠物窗口实时生效）
 async function save() {
   saveTimer = null;
   const fp = stateFingerprint();
-  if (fp === lastSaved) return; // 与上次保存一致，跳过（防止 event echo 循环）
+  if (fp === lastSaved) return;
   errorMsg.value = '';
   try {
     await invoke('update_settings', { settings: JSON.parse(fp) });
@@ -92,6 +125,7 @@ async function save() {
   }
 }
 
+/// 150ms 防抖保存 — 避免连续拖拽滑块时频繁写入
 function debouncedSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(save, 150);
@@ -100,7 +134,7 @@ function debouncedSave() {
 onMounted(async () => {
   await loadSettings();
 
-  // 监听来自菜单的设置变更事件
+  // 监听来自 Rust 端（托盘菜单）的设置变更事件
   unlistenSettings = await listen('settings-changed', (event: any) => {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     const s = event.payload;
@@ -113,7 +147,7 @@ onMounted(async () => {
     lastSaved = stateFingerprint();
   });
 
-  // 窗口获焦时拉取最新设置（兜底）
+  // 窗口获焦时重新拉取设置（兜底同步）
   unlistenFocus = await getCurrentWindow().listen('tauri://focus', () => {
     if (saveTimer) return;
     loadSettings();
@@ -126,6 +160,7 @@ onUnmounted(() => {
   if (unlistenFocus) { unlistenFocus(); unlistenFocus = null; }
 });
 
+/// 深度监听设置变更 → 自动触发防抖保存
 watch(
   () => ({ ...settings }),
   () => { debouncedSave(); },
