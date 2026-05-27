@@ -31,7 +31,6 @@ cargo tauri build
 ├── package.json
 ├── vite.config.ts
 ├── tsconfig.json
-├── CLAUDE.md                    # AI 开发原则
 ├── src/
 │   ├── index.html               # 宠物窗口 (vanilla JS + 路径算法)
 │   ├── pet.less                 # 精灵图逐帧动画样式
