@@ -1,7 +1,14 @@
 {
   "name": "moju-desktop-pet",
   "version": "1.0.0",
+  "description": "🐕 MoJu Desktop Pet — 像素桌面宠物 | Tauri + Vue 3 + 多精灵切换 + 多屏漫游 + AI 交互",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oDen7/DesktopPet"
+  },
+  "homepage": "https://gitee.com/MoJu-Tech/desktop-pet",
   "scripts": {
     "dev": "concurrently \"vite build --watch\" \"tauri dev\"",
     "build": "vite build && tauri build"
